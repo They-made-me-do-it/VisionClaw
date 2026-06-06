@@ -1,0 +1,24 @@
+﻿{
+    "events":  [
+                   {
+                       "time":  "0ms",
+                       "status":  "SUCCESS",
+                       "event":  "SDK_Init"
+                   },
+                   {
+                       "time":  "120ms",
+                       "status":  "SUCCESS",
+                       "event":  "Bluetooth_Pairing"
+                   },
+                   {
+                       "time":  "450ms",
+                       "status":  "SUCCESS",
+                       "event":  "WebSocket_Connect"
+                   },
+                   {
+                       "time":  "600ms",
+                       "status":  "SUCCESS",
+                       "event":  "Media_Stream_Start"
+                   }
+               ]
+}

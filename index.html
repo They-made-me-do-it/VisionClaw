@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VisionClaw — Wearable Edge Intelligence</title>
+    <!-- Modern Premium Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="glow-container">
+        <div class="glow-orb orb-primary"></div>
+        <div class="glow-orb orb-secondary"></div>
+    </div>
+
+    <header>
+        <div class="logo">
+            <span class="pulse-icon"></span>
+            <h1>VISIONCLAW</h1>
+            <span class="badge">Meta Ray-Ban Edge Gateway</span>
+        </div>
+        <div class="system-status">
+            <span class="status-label">API Gateway:</span>
+            <span id="gateway-status" class="status-value status-ok">Connected</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- Gemini Live Gateway Portal -->
+        <section class="card card-portal" style="margin-bottom: 1.5rem;">
+            <div class="card-header">
+                <h2>Gemini Live WebSocket Client Ingress</h2>
+                <span id="socket-status-badge" class="status-value status-error">DISCONNECTED</span>
+            </div>
+            <div class="portal-form" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+                <div class="form-row" style="flex: 1; min-width: 200px;">
+                    <label for="api-key-input" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; margin-bottom: 0.25rem;">Gemini API Key:</label>
+                    <input type="password" id="api-key-input" placeholder="Enter API Key" style="background: rgba(7, 9, 14, 0.85); border: 1px solid var(--border-color); color: var(--text-primary); padding: 0.4rem 0.6rem; border-radius: 6px; outline: none;" />
+                </div>
+                <div class="form-row" style="flex: 1; min-width: 200px;">
+                    <label for="gateway-ip-input" style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; margin-bottom: 0.25rem;">OpenClaw Gateway Host:</label>
+                    <input type="text" id="gateway-ip-input" value="localhost" style="background: rgba(7, 9, 14, 0.85); border: 1px solid var(--border-color); color: var(--text-primary); padding: 0.4rem 0.6rem; border-radius: 6px; outline: none;" />
+                </div>
+                <div class="portal-actions">
+                    <button id="connect-ws-btn" class="btn btn-connect" style="background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); padding: 0.5rem 1rem;">Connect Live API</button>
+                    <button id="disconnect-ws-btn" class="btn btn-disconnect hidden" style="background: linear-gradient(135deg, var(--error) 0%, #b91c1c 100%); padding: 0.5rem 1rem;">Disconnect</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Primary UI: Output Viewer & Telemetry Playback -->
+        <section class="viewer-grid">
+            <!-- Camera Card with Manual Snap Trigger -->
+            <div class="card card-video">
+                <div class="card-header">
+                    <h2>Egocentric Frame Ingestion</h2>
+                    <span class="rate-badge">1 FPS (Throttled)</span>
+                </div>
+                <div class="video-container">
+                    <canvas id="camera-canvas" width="504" height="896"></canvas>
+                    <div class="overlay-telemetry">
+                        <p>DAT RESOLUTION: 504x896 (MEDIUM)</p>
+                        <p id="frame-counter">FRAMES: 0</p>
+                    </div>
+                </div>
+                <div class="video-actions">
+                    <button id="snap-btn" class="btn btn-snap">Take Snapshot & Upload to OpenClaw</button>
+                </div>
+            </div>
+
+            <!-- Audio & Gateway Actions -->
+            <div class="card-stack">
+                <!-- Live Waveform connected to actual mic -->
+                <div class="card card-audio">
+                    <div class="card-header">
+                        <h2>Live Microphone Spectrogram</h2>
+                        <button id="mic-toggle-btn" class="btn btn-sm btn-secondary">Connect Audio Input</button>
+                    </div>
+                    <div class="audio-panel">
+                        <canvas id="waveform-canvas"></canvas>
+                        <div class="audio-metrics">
+                            <div>
+                                <span class="label">Hardware Source</span>
+                                <span class="val" id="audio-source-status">Simulated Sine</span>
+                            </div>
+                            <div>
+                                <span class="label">Sample Rate</span>
+                                <span class="val">16 kHz PCM</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OpenClaw Gateway Panel & Interactive Tool Dispatcher -->
+                <div class="card card-gateway">
+                    <div class="card-header">
+                        <h2>OpenClaw Action Router</h2>
+                        <div class="breaker-indicator">
+                            <span>Breaker:</span>
+                            <span id="breaker-status" class="status-value status-ok">CLOSED</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Form to dispatch real tool calls to local server -->
+                    <form id="tool-form" class="tool-form">
+                        <div class="form-row">
+                            <label for="tool-select">Select Tool:</label>
+                            <select id="tool-select">
+                                <option value="capture_photo">capture_photo</option>
+                                <option value="notion_create_page">notion_create_page</option>
+                                <option value="drive_upload">drive_upload</option>
+                                <option value="weather_alert">weather_alert</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label for="tool-args">Arguments (JSON):</label>
+                            <textarea id="tool-args">{"width": 1920, "height": 1080}</textarea>
+                        </div>
+                        <button type="submit" class="btn btn-dispatch">Invoke OpenClaw Tool</button>
+                    </form>
+
+                    <div class="claw-metrics">
+                        <div class="metric-item">
+                            <span class="metric-num" id="metric-invocations">0</span>
+                            <span class="metric-label">Invocations</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-num" id="metric-failures">0</span>
+                            <span class="metric-label">Failures</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-num" id="metric-rtt">-- ms</span>
+                            <span class="metric-label">Rtt Latency</span>
+                        </div>
+                    </div>
+                    <div class="logs-container" id="claw-logs">
+                        <div class="log-entry system">Action routing listener online. Listening on port 18789.</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Workspace output files and images selection -->
+        <section class="card card-gallery">
+            <div class="card-header">
+                <h2>Workspace Output Gallery (~/.openclaw/workspace)</h2>
+                <button id="refresh-gallery-btn" class="btn btn-sm">Refresh Workspace Files</button>
+            </div>
+            <div class="gallery-wrapper">
+                <div class="gallery-grid" id="gallery-grid">
+                    <p class="empty-gallery-msg">No images captured in the workspace yet. Take a snapshot to save files to the host disk.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- WSS Terminal Logger -->
+        <section class="card card-terminal">
+            <div class="card-header">
+                <h2>Gemini Live WebSocket Transport Logs</h2>
+                <div class="resumption-badge">
+                    <span>Resumption Token: </span>
+                    <span id="resumption-token">None</span>
+                </div>
+            </div>
+            <div class="terminal-body" id="wss-logs">
+                <div class="terminal-line system">WSS Connection: established to wss://generativelanguage.googleapis.com/...</div>
+                <div class="terminal-line client">&gt; BidiGenerateContentSetup [Target: gemini-live-2.5-flash-native-audio] sent.</div>
+            </div>
+        </section>
+
+        <!-- Debug / Intermediate steps view (behind a toggle) -->
+        <section class="debug-toggle-panel">
+            <button id="toggle-debug-btn" class="btn">Toggle Raw Pipeline JSON (Debug Inspect)</button>
+            
+            <div id="debug-json-container" class="debug-json-container hidden">
+                <div class="json-grid">
+                    <div>
+                        <h3>meta.json</h3>
+                        <pre id="json-meta">Loading...</pre>
+                    </div>
+                    <div>
+                        <h3>timeline.json</h3>
+                        <pre id="json-timeline">Loading...</pre>
+                    </div>
+                    <div>
+                        <h3>run_summary.json</h3>
+                        <pre id="json-summary">Loading...</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 VisionClaw Edge Intelligence System. Built on AntiGravity Platform.</p>
+    </footer>
+
+    <script src="index.js"></script>
+</body>
+</html>

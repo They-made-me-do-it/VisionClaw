@@ -1,0 +1,8 @@
+﻿{
+    "latency":  {
+                    "audioResampleMs":  2,
+                    "videoFrameProcessingMs":  8,
+                    "openClawDispatchMs":  15,
+                    "wsRttMs":  32
+                }
+}

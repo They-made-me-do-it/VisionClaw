@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.visionclaw.wearable">
+
+    <!-- Permissions required for Media Streaming & Bluetooth Classic Glasses Links -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <application
+        android:allowBackup="true"
+        android:label="VisionClaw Edge Gateway"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- 
+          Meta Wearables Device Access Toolkit (DAT) SDK configuration.
+          CRITICAL: We format the com.meta.wearable.mwdat.APPLICATION_ID using escaped string quotes (\&quot;)
+          so that the platform manifest parser does not interpret the numerical ID string as an integer value.
+          Passing it as an integer causes silent DAT library registration and runtime crashes.
+        -->
+        <meta-data
+            android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+            android:value="\&quot;9876543210123\&quot;" />
+
+        <meta-data
+            android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+            android:value="\&quot;us_live_token_7a9c8b3d2e1f0e4b8a9c0d1e2f3a4b5c\&quot;" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
