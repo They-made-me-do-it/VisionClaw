@@ -208,23 +208,23 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 4. Live API Route: Amazon Inventory Bypass (Rainforest Proxy)
+    // 4. Live API Route: Amazon Inventory Bypass (SerpApi site:amazon.com Search Proxy)
     if (req.method === 'POST' && req.url === '/api/amazon/search') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', () => {
             try {
                 const payload = JSON.parse(body);
-                const query = encodeURIComponent(payload.query || '');
-                const apiKey = envConfig['RAINFOREST_API_KEY'];
+                const query = encodeURIComponent(`site:amazon.com ${payload.query || ''}`);
+                const apiKey = envConfig['SERPAPI_API_KEY'];
                 
                 if (!apiKey) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ status: 'ERROR', message: 'Rainforest API key missing from .env' }));
+                    res.end(JSON.stringify({ status: 'ERROR', message: 'SerpApi API key missing from .env' }));
                     return;
                 }
-
-                const url = `https://api.rainforestapi.com/request?api_key=${apiKey}&type=search&amazon_domain=amazon.com&search_term=${query}`;
+ 
+                const url = `https://serpapi.com/search.json?q=${query}&api_key=${apiKey}&engine=google`;
                 
                 const https = require('https');
                 https.get(url, (apiRes) => {
@@ -233,29 +233,42 @@ const server = http.createServer((req, res) => {
                     apiRes.on('end', () => {
                         try {
                             const json = JSON.parse(data);
-                            if (json.request_info && !json.request_info.success) {
+                            if (json.error) {
                                 res.writeHead(500, { 'Content-Type': 'application/json' });
-                                res.end(JSON.stringify({ status: 'ERROR', message: json.request_info.message || 'API request failed' }));
+                                res.end(JSON.stringify({ status: 'ERROR', message: json.error }));
                                 return;
                             }
+                            const organicResults = json.organic_results || [];
                             // Extract top 3 results
-                            const results = (json.search_results || []).slice(0, 3).map(item => ({
-                                title: item.title,
-                                price: item.price ? item.price.raw : 'N/A',
-                                link: item.link
-                            }));
+                            const results = organicResults.slice(0, 3).map(item => {
+                                let price = 'N/A';
+                                if (item.rich_snippet && item.rich_snippet.shopping && item.rich_snippet.shopping.price) {
+                                    price = item.rich_snippet.shopping.price;
+                                } else {
+                                    // Try to parse price from snippet (e.g. "$49.99")
+                                    const match = (item.snippet || '').match(/\$[0-9]+(?:\.[0-9]{2})?/);
+                                    if (match) {
+                                        price = match[0];
+                                    }
+                                }
+                                return {
+                                    title: item.title.replace(" - Amazon.com", "").replace(": Amazon.com", ""),
+                                    price: price,
+                                    link: item.link
+                                };
+                            });
                             res.writeHead(200, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify(results));
                         } catch (e) {
                             res.writeHead(500, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({ status: 'ERROR', message: 'Failed to parse Rainforest API response' }));
+                            res.end(JSON.stringify({ status: 'ERROR', message: 'Failed to parse search response' }));
                         }
                     });
                 }).on('error', (err) => {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ status: 'ERROR', message: err.message }));
                 });
-
+ 
             } catch (err) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ status: 'ERROR', message: 'Invalid payload' }));

@@ -35,6 +35,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleDebugBtn = document.getElementById('toggle-debug-btn');
     const debugContainer = document.getElementById('debug-json-container');
 
+    // Amazon UI elements
+    const amazonQueryInput = document.getElementById('amazon-query');
+    const amazonSearchBtn = document.getElementById('amazon-search-btn');
+    const amazonResultsContainer = document.getElementById('amazon-results');
+
     // Live Camera Stream
     const video = document.createElement('video');
     video.autoplay = true;
@@ -95,33 +100,54 @@ document.addEventListener('DOMContentLoaded', () => {
         appendTerminalLog(clawLogsEl, "Gateway Error: Camera permissions missing.", "fail");
     });
 
+    // Helper to draw rescaled and horizontally mirrored camera frame to any canvas context
+    function drawVideoToContext(ctx, canvasWidth, canvasHeight, mirror = true) {
+        if (!cameraConnected || video.readyState !== video.HAVE_ENOUGH_DATA) {
+            ctx.fillStyle = '#0b0f19';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 16px "JetBrains Mono"';
+            ctx.textAlign = 'center';
+            ctx.fillText('CAMERA DISCONNECTED / ERROR', canvasWidth / 2, canvasHeight / 2);
+            ctx.textAlign = 'left';
+            return;
+        }
+
+        const videoRatio = video.videoWidth / video.videoHeight;
+        const canvasRatio = canvasWidth / canvasHeight;
+
+        let sx, sy, sWidth, sHeight;
+
+        if (videoRatio > canvasRatio) {
+            // Video is wider than canvas (crop sides)
+            sHeight = video.videoHeight;
+            sWidth = video.videoHeight * canvasRatio;
+            sx = (video.videoWidth - sWidth) / 2;
+            sy = 0;
+        } else {
+            // Video is taller than canvas (crop top/bottom)
+            sWidth = video.videoWidth;
+            sHeight = video.videoWidth / canvasRatio;
+            sx = 0;
+            sy = (video.videoHeight - sHeight) / 2;
+        }
+
+        ctx.save();
+        if (mirror) {
+            ctx.translate(canvasWidth, 0);
+            ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
+        ctx.restore();
+    }
+
     // --- 1. Camera Frame Ingestion Loop ---
     let frameCount = 0;
     function drawCameraFrame() {
         frameCount++;
         frameCounterEl.innerText = `FRAMES: ${frameCount}`;
 
-        cameraCtx.fillStyle = '#0b0f19';
-        cameraCtx.fillRect(0, 0, cameraCanvas.width, cameraCanvas.height);
-
-        // Draw webcam stream or fallback image
-        if (cameraConnected && video.readyState === video.HAVE_ENOUGH_DATA) {
-            const scale = Math.max(cameraCanvas.width / video.videoWidth, cameraCanvas.height / video.videoHeight);
-            const x = (cameraCanvas.width / 2) - (video.videoWidth / 2) * scale;
-            const y = (cameraCanvas.height / 2) - (video.videoHeight / 2) * scale;
-            
-            cameraCtx.save();
-            cameraCtx.translate(cameraCanvas.width, 0);
-            cameraCtx.scale(-1, 1);
-            cameraCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
-            cameraCtx.restore();
-        } else if (!cameraConnected) {
-            cameraCtx.fillStyle = '#ef4444';
-            cameraCtx.font = 'bold 16px "JetBrains Mono"';
-            cameraCtx.textAlign = 'center';
-            cameraCtx.fillText('CAMERA DISCONNECTED / ERROR', cameraCanvas.width / 2, cameraCanvas.height / 2);
-            cameraCtx.textAlign = 'left';
-        }
+        drawVideoToContext(cameraCtx, cameraCanvas.width, cameraCanvas.height, true);
 
         // HUD overlay
         cameraCtx.strokeStyle = 'rgba(139, 92, 246, 0.4)';
@@ -453,13 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tempCanvas.height = 896;
         const tempCtx = tempCanvas.getContext('2d');
 
-        const scale = Math.max(tempCanvas.width / video.videoWidth, tempCanvas.height / video.videoHeight);
-        const x = (tempCanvas.width / 2) - (video.videoWidth / 2) * scale;
-        const y = (tempCanvas.height / 2) - (video.videoHeight / 2) * scale;
-        
-        tempCtx.translate(tempCanvas.width, 0);
-        tempCtx.scale(-1, 1);
-        tempCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
+        drawVideoToContext(tempCtx, tempCanvas.width, tempCanvas.height, true);
 
         tempCanvas.toBlob(blob => {
             if (!blob) return;
@@ -674,13 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        const scale = Math.max(tempCanvas.width / video.videoWidth, tempCanvas.height / video.videoHeight);
-        const x = (tempCanvas.width / 2) - (video.videoWidth / 2) * scale;
-        const y = (tempCanvas.height / 2) - (video.videoHeight / 2) * scale;
-        
-        tempCtx.translate(tempCanvas.width, 0);
-        tempCtx.scale(-1, 1);
-        tempCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
+        drawVideoToContext(tempCtx, tempCanvas.width, tempCanvas.height, true);
 
         tempCanvas.toBlob(blob => {
             if (!blob) return;
@@ -754,6 +768,65 @@ document.addEventListener('DOMContentLoaded', () => {
             appendTerminalLog(clawLogsEl, `Tool Invocation Failure: ${err.message}`, "fail");
         });
     });
+
+    // --- 7b. Amazon Inventory Recon Search ---
+    if (amazonSearchBtn) {
+        amazonSearchBtn.addEventListener('click', () => {
+            const query = amazonQueryInput.value.trim();
+            if (!query) {
+                alert('Please enter a product to search.');
+                return;
+            }
+
+            amazonSearchBtn.disabled = true;
+            amazonSearchBtn.innerText = "Searching Live Inventory...";
+            amazonResultsContainer.style.display = 'block';
+            amazonResultsContainer.innerHTML = '<span style="color:var(--primary)">Connecting to Rainforest API...</span>';
+
+            fetch('/api/amazon/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: query })
+            })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(errData => {
+                        throw new Error(errData.message || 'Server error');
+                    });
+                }
+                return res.json();
+            })
+            .then(data => {
+                amazonSearchBtn.disabled = false;
+                amazonSearchBtn.innerText = "Search Live Inventory";
+                
+                if (!data || data.length === 0) {
+                    amazonResultsContainer.innerHTML = '<span style="color:var(--error)">No items found.</span>';
+                    return;
+                }
+
+                let html = '<div style="display:flex; flex-direction:column; gap:8px;">';
+                data.forEach((item, index) => {
+                    html += `
+                        <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
+                            <div style="color: #10b981; font-weight: bold; margin-bottom: 4px;">Top Pick #${index + 1} &mdash; ${item.price}</div>
+                            <div style="color: #e2e8f0; font-size: 0.8rem; margin-bottom: 6px;">${item.title.substring(0, 100)}${item.title.length > 100 ? '...' : ''}</div>
+                            <a href="${item.link}" target="_blank" style="color: var(--primary); text-decoration: none; font-size: 0.75rem;">View Listing &rarr;</a>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                amazonResultsContainer.innerHTML = html;
+                appendTerminalLog(clawLogsEl, `Amazon Recon: Found ${data.length} listings for "${query}"`, "success");
+            })
+            .catch(err => {
+                amazonSearchBtn.disabled = false;
+                amazonSearchBtn.innerText = "Search Live Inventory";
+                amazonResultsContainer.innerHTML = `<span style="color:var(--error)">Failed: ${err.message}</span>`;
+                appendTerminalLog(clawLogsEl, `Amazon Recon Failed: ${err.message}`, "fail");
+            });
+        });
+    }
 
     // --- 8. Workspace Gallery ---
     function refreshWorkspaceGallery() {
