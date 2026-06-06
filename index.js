@@ -48,10 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let micStreamActive = false;
     let nextPlayTime = 0; // For queueing downstream audio chunks seamlessly
 
-    // Fallback Image
-    const imgFallback = new Image();
-    imgFallback.src = 'assets/egocentric_desk.png';
-
+    // No Fallback Image allowed due to strict anti-mocking rules
     // WebSocket state
     let openclawGatewayToken = 'oc_live_token_7a9c8b3d2e1f0';
     let ws = null;
@@ -94,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })
     .catch(err => {
         console.warn("Camera access denied: ", err);
-        appendTerminalLog(wssLogsEl, "Camera access denied. Using workspace fallback visualization.", "error");
+        appendTerminalLog(wssLogsEl, "Camera access denied. Camera disconnected.", "error");
         appendTerminalLog(clawLogsEl, "Gateway Error: Camera permissions missing.", "fail");
     });
 
@@ -118,11 +115,12 @@ document.addEventListener('DOMContentLoaded', () => {
             cameraCtx.scale(-1, 1);
             cameraCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
             cameraCtx.restore();
-        } else if (imgFallback.complete && imgFallback.naturalWidth !== 0) {
-            const scale = Math.max(cameraCanvas.width / imgFallback.width, cameraCanvas.height / imgFallback.height);
-            const x = (cameraCanvas.width / 2) - (imgFallback.width / 2) * scale;
-            const y = (cameraCanvas.height / 2) - (imgFallback.height / 2) * scale;
-            cameraCtx.drawImage(imgFallback, x, y, imgFallback.width * scale, imgFallback.height * scale);
+        } else if (!cameraConnected) {
+            cameraCtx.fillStyle = '#ef4444';
+            cameraCtx.font = 'bold 16px "JetBrains Mono"';
+            cameraCtx.textAlign = 'center';
+            cameraCtx.fillText('CAMERA DISCONNECTED / ERROR', cameraCanvas.width / 2, cameraCanvas.height / 2);
+            cameraCtx.textAlign = 'left';
         }
 
         // HUD overlay
@@ -671,17 +669,18 @@ document.addEventListener('DOMContentLoaded', () => {
         tempCanvas.height = 896;
         const tempCtx = tempCanvas.getContext('2d');
 
-        if (cameraConnected && video.readyState === video.HAVE_ENOUGH_DATA) {
-            const scale = Math.max(tempCanvas.width / video.videoWidth, tempCanvas.height / video.videoHeight);
-            const x = (tempCanvas.width / 2) - (video.videoWidth / 2) * scale;
-            const y = (tempCanvas.height / 2) - (video.videoHeight / 2) * scale;
-            
-            tempCtx.translate(tempCanvas.width, 0);
-            tempCtx.scale(-1, 1);
-            tempCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
-        } else {
-            tempCtx.drawImage(imgFallback, 0, 0, tempCanvas.width, tempCanvas.height);
+        if (!cameraConnected || video.readyState !== video.HAVE_ENOUGH_DATA) {
+            appendTerminalLog(clawLogsEl, "Upload Failed: No active live camera feed available.", "fail");
+            return;
         }
+
+        const scale = Math.max(tempCanvas.width / video.videoWidth, tempCanvas.height / video.videoHeight);
+        const x = (tempCanvas.width / 2) - (video.videoWidth / 2) * scale;
+        const y = (tempCanvas.height / 2) - (video.videoHeight / 2) * scale;
+        
+        tempCtx.translate(tempCanvas.width, 0);
+        tempCtx.scale(-1, 1);
+        tempCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
 
         tempCanvas.toBlob(blob => {
             if (!blob) return;

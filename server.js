@@ -70,7 +70,7 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 1. Live API Route: OpenClaw tool call invocation (Proxy bridge with simulated fallback)
+    // 1. Live API Route: OpenClaw tool call invocation (Proxy bridge with strict error reporting)
     if (req.method === 'POST' && req.url === '/tools/invoke') {
         let body = '';
         req.on('data', chunk => { body += chunk; });

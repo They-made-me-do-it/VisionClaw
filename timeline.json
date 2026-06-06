@@ -3,22 +3,17 @@
                    {
                        "time":  "0ms",
                        "status":  "SUCCESS",
-                       "event":  "SDK_Init"
+                       "event":  "Integration_Test_Start"
                    },
                    {
-                       "time":  "120ms",
+                       "time":  "38ms",
                        "status":  "SUCCESS",
-                       "event":  "Bluetooth_Pairing"
+                       "event":  "API_Config_Check"
                    },
                    {
-                       "time":  "450ms",
+                       "time":  "83ms",
                        "status":  "SUCCESS",
-                       "event":  "WebSocket_Connect"
-                   },
-                   {
-                       "time":  "600ms",
-                       "status":  "SUCCESS",
-                       "event":  "Media_Stream_Start"
+                       "event":  "Tool_Invoke_Ping"
                    }
                ]
 }

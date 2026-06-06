@@ -1,8 +1,9 @@
 ﻿{
-    "audioChunksStreamed":  2700,
-    "jobId":  "job-608859053",
-    "framesStreamed":  450,
+    "audioChunksStreamed":  0,
+    "jobId":  "test-job-20260606134705",
+    "totalTimeMs":  85,
+    "framesStreamed":  0,
     "failuresEncountered":  0,
-    "toolCallsExecuted":  12,
+    "toolCallsExecuted":  0,
     "status":  "COMPLETED"
 }
