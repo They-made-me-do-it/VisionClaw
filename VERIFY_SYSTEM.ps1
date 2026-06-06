@@ -65,6 +65,25 @@ if ($env:ANDROID_HOME) {
     $envSnapshot += "ANDROID_HOME: Not Found"
 }
 
+# 4. Check OpenClaw CLI & Gateway
+$openclawVer = & openclaw --version 2>&1
+if ($LASTEXITCODE -eq 0) {
+    $envSnapshot += "OpenClaw CLI: $($openclawVer -join ' ')"
+    $gatewayHealth = & openclaw --profile autoclaw gateway health 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $envSnapshot += "OpenClaw Gateway: Running & Healthy"
+    } else {
+        $envSnapshot += "OpenClaw Gateway: Stopped or Unhealthy"
+        # Not failing the check completely if openclaw is present, since START_APP.ps1 can start it,
+        # but let's log it in env snapshot.
+    }
+} else {
+    $allPassed = $false
+    $failReasons += "OpenClaw CLI is missing or not added to PATH. Install it via npm: npm install -g openclaw"
+    $envSnapshot += "OpenClaw CLI: Not Found"
+}
+
+
 # Write environment snapshot to handoff directory
 $SnapshotPath = Join-Path $HandoffDir "ENV_SNAPSHOT.txt"
 $envSnapshot | Out-File -FilePath $SnapshotPath -Encoding utf8

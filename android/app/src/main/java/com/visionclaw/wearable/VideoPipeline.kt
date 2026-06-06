@@ -59,6 +59,10 @@ public class VideoPipeline {
     @Volatile
     private var isFrameInFlight = false
 
+    // Cache for latest frame bytes to expose to other tools (like capture_photo)
+    @Volatile
+    public var lastFrameBytes: ByteArray? = null
+
     // Active SDK 0.7.0 references for strict lifecycle management
     private var activeSession: DATDeviceSession? = null
     private var activeStream: DATVideoStream? = null
@@ -115,6 +119,9 @@ public class VideoPipeline {
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 50, outputStream)
                 val jpegBytes = outputStream.toByteArray()
+
+                // Cache the real frame bytes for downstream photo-capture tools
+                lastFrameBytes = jpegBytes
 
                 // 4. Base64 Encode JPEG binary data without line wraps
                 val base64String = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)

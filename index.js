@@ -332,7 +332,16 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         ws.onmessage = (e) => {
-            handleWSSMessage(e.data);
+            if (typeof e.data === 'string') {
+                handleWSSMessage(e.data);
+            } else if (e.data instanceof Blob) {
+                // Read binary audio output from Gemini Live WSS and play it directly
+                e.data.arrayBuffer().then(buffer => {
+                    playRawPCMBuffer(buffer);
+                }).catch(err => {
+                    console.error("Error reading audio binary blob:", err);
+                });
+            }
         };
 
         ws.onerror = (err) => {
@@ -371,7 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const setupPayload = {
             setup: {
-                model: "models/gemini-live-2.5-flash-native-audio",
+                model: "models/gemini-2.5-flash-native-audio-latest",
                 generationConfig: {
                     responseModalities: ["AUDIO"],
                     speechConfig: {
@@ -384,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 contextWindowCompression: {
                     slidingWindow: {
-                        windowSizeLimit: 2000
+                        targetTokens: 2000
                     }
                 },
                 tools: [
@@ -393,8 +402,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             {
                                 name: "execute",
                                 description: "Execute local tool action via the OpenClaw Gateway on the LAN",
-                                behavior: "NON_BLOCKING",
-                                scheduling: "INTERRUPT",
                                 parameters: {
                                     type: "OBJECT",
                                     properties: {
@@ -519,6 +526,32 @@ document.addEventListener('DOMContentLoaded', () => {
         nextPlayTime += audioBuffer.duration;
     }
 
+    // Playback raw binary ArrayBuffer PCM audio
+    function playRawPCMBuffer(arrayBuffer) {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const int16Array = new Int16Array(arrayBuffer);
+        const float32Array = new Float32Array(int16Array.length);
+        for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0;
+        }
+        
+        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+        audioBuffer.getChannelData(0).set(float32Array);
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+        
+        const currentTime = audioCtx.currentTime;
+        if (nextPlayTime < currentTime) {
+            nextPlayTime = currentTime;
+        }
+        source.start(nextPlayTime);
+        nextPlayTime += audioBuffer.duration;
+    }
+
     // Route a live tool call from Gemini to OpenClaw
     function routeLiveToolCall(args, callId) {
         const toolName = args.toolName;
@@ -535,7 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const start = performance.now();
         const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
 
-        fetch(`http://${gatewayHost}:18789/tools/invoke`, {
+        fetch(`/tools/invoke`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -543,7 +576,8 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             body: JSON.stringify({
                 tool: toolName,
-                arguments: toolArguments
+                arguments: toolArguments,
+                gatewayHost: gatewayHost
             })
         })
         .then(res => {
@@ -658,7 +692,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const startTimestamp = performance.now();
         const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
 
-        fetch(`http://${gatewayHost}:18789/tools/invoke`, {
+        fetch(`/tools/invoke`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -666,7 +700,8 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             body: JSON.stringify({
                 tool: toolName,
-                arguments: argumentsObj
+                arguments: argumentsObj,
+                gatewayHost: gatewayHost
             })
         })
         .then(res => {
@@ -762,4 +797,22 @@ document.addEventListener('DOMContentLoaded', () => {
     drawAudioWaveform();
     refreshWorkspaceGallery();
     setInterval(refreshWorkspaceGallery, 10000);
+
+    // Fetch unified config and pre-populate credentials, then auto-connect
+    fetch('/api/config')
+    .then(res => res.json())
+    .then(config => {
+        if (config.geminiApiKey) {
+            apiKeyInput.value = config.geminiApiKey;
+            appendTerminalLog(wssLogsEl, "Automatically populated Gemini API Key from .env. Connecting...", "success");
+            
+            // Auto connect live session
+            setTimeout(() => {
+                connectWsBtn.click();
+            }, 100);
+        }
+    })
+    .catch(err => {
+        console.warn("Failed to load auto-config:", err);
+    });
 });

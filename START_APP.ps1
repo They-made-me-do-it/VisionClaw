@@ -1,7 +1,7 @@
 # START_APP.ps1
-# Startup script for VisionClaw OpenClaw Gateway simulation and mobile client configurations
+# Startup script for VisionClaw OpenClaw Gateway and mobile client configurations
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "SilentlyContinue"
 $HandoffDir = Join-Path $PSScriptRoot "_handoff"
 $LogPath = Join-Path $HandoffDir "LAST_RUN.log"
 $ServerPort = 18790
@@ -25,9 +25,60 @@ function Log-Error($msg) {
     $timestamped | Out-File -FilePath $LogPath -Append -Encoding utf8
 }
 
-Log-Message "Starting backend Node.js server (server.js)..."
+# 1. Load .env file at workspace root
+$envFile = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envFile) {
+    Log-Message "Loading env configurations from $envFile..."
+    Get-Content $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#")) {
+            if ($line -match '^([^=]+)=(.*)$') {
+                $key = $Matches[1].Trim()
+                $val = $Matches[2].Trim()
+                if ($val -match '^["''](.*)["'']$') {
+                    $val = $Matches[1]
+                }
+                [System.Environment]::SetEnvironmentVariable($key, $val, "Process")
+            }
+        }
+    }
+} else {
+    Log-Message "No .env file found at $envFile."
+}
 
-# Start the Node.js process and redirect stdout/stderr to LAST_RUN.log
+# 2. Run OpenClaw configuration script
+Log-Message "Auto-configuring OpenClaw settings..."
+& (Join-Path $PSScriptRoot "CONFIGURE_OPENCLAW.ps1")
+
+# 3. Check and start OpenClaw Gateway Daemon
+$gatewayProcess = $null
+$gatewayToken = $env:OPENCLAW_GATEWAY_TOKEN
+if (-not $gatewayToken) {
+    $gatewayToken = "bcc2b8fb978d0aaab930713064dff7ac9c801c2e7e6a5f16"
+}
+
+Log-Message "Checking OpenClaw Gateway service status..."
+$healthCheck = & openclaw --profile autoclaw gateway health 2>&1
+if ($LASTEXITCODE -eq 0 -and $healthCheck -match "OK") {
+    Log-Message "OpenClaw Gateway is already running and healthy. Skipping manual start."
+} else {
+    Log-Message "OpenClaw Gateway is not running or unhealthy. Starting background gateway process..."
+    $gatewayLog = Join-Path $HandoffDir "OPENCLAW_GATEWAY.log"
+    "" | Out-File -FilePath $gatewayLog -Encoding utf8
+    
+    $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+    
+    # Wait for gateway to bind
+    Start-Sleep -Seconds 3
+    if ($gatewayProcess.HasExited) {
+        Log-Error "Failed to start OpenClaw Gateway. See logs at: $gatewayLog"
+        exit 1
+    }
+    Log-Message "OpenClaw Gateway successfully started (PID: $($gatewayProcess.Id)). Log: $gatewayLog"
+}
+
+# 4. Start Dashboard Static File Server (Node.js)
+Log-Message "Starting backend Node.js server (server.js)..."
 $nodeProcess = Start-Process -FilePath "node" -ArgumentList "server.js" -NoNewWindow -PassThru
 
 # Give Node a moment to bind to the port
@@ -40,8 +91,6 @@ if ($nodeProcess.HasExited) {
 
 Log-Message "Dashboard Server active at: http://localhost:$ServerPort"
 Log-Message "Opening Dashboard in default web browser..."
-
-# Launch the default web browser to the local page to bring it 'in the face' of the user
 Start-Process "http://localhost:$ServerPort"
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor Cyan
@@ -51,7 +100,7 @@ Write-Host "--------------------------------------------------`n" -ForegroundCol
 
 try {
     # Enter wait loop while monitoring process life
-    while (-not $nodeProcess.HasExited) {
+    while (-not $nodeProcess.HasExited -and ($null -eq $gatewayProcess -or -not $gatewayProcess.HasExited)) {
         Start-Sleep -Seconds 1
     }
 }
@@ -62,9 +111,14 @@ catch {
     Log-Error $_.Exception.Message
 }
 finally {
-    if (-not $nodeProcess.HasExited) {
+    if ($nodeProcess -and -not $nodeProcess.HasExited) {
         Log-Message "Terminating background Node.js server..."
         Stop-Process -Id $nodeProcess.Id -Force
     }
+    if ($gatewayProcess -and -not $gatewayProcess.HasExited) {
+        Log-Message "Terminating background OpenClaw Gateway server..."
+        Stop-Process -Id $gatewayProcess.Id -Force
+    }
     Log-Message "Shutdown clean and complete."
 }
+

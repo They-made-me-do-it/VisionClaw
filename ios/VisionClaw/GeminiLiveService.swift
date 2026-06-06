@@ -45,7 +45,7 @@ public final class GeminiLiveService: NSObject {
     private func sendSetupMessage() {
         var setupPayload: [String: Any] = [
             "setup": [
-                "model": "models/gemini-live-2.5-flash-native-audio",
+                "model": "models/gemini-2.5-flash-native-audio-latest",
                 "generationConfig": [
                     "responseModalities": ["AUDIO"],
                     "speechConfig": [
@@ -59,7 +59,7 @@ public final class GeminiLiveService: NSObject {
                 // Context window compression configuration to survive multimedia session limits
                 "contextWindowCompression": [
                     "slidingWindow": [
-                        "windowSizeLimit": 2000
+                        "targetTokens": 2000
                     ]
                 ],
                 // OpenClaw execution tool registration
@@ -69,8 +69,6 @@ public final class GeminiLiveService: NSObject {
                             [
                                 "name": "execute",
                                 "description": "Execute local tool action via the OpenClaw Gateway on the LAN",
-                                "behavior": "NON_BLOCKING", // Enable async conversation continuation
-                                "scheduling": "INTERRUPT",   // Interrupt the model stream if required
                                 "parameters": [
                                     "type": "OBJECT",
                                     "properties": [
@@ -108,8 +106,11 @@ public final class GeminiLiveService: NSObject {
                 case .string(let text):
                     self.handleServerJSON(text)
                 case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
+                    if let text = String(data: data, encoding: .utf8), text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
                         self.handleServerJSON(text)
+                    } else {
+                        // Playback the raw binary PCM chunk directly (24 kHz mono Int16 Little Endian)
+                        AudioManager.shared.playAudio(chunk: data)
                     }
                 @unknown default:
                     break

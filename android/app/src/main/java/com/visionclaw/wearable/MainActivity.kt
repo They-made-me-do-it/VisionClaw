@@ -27,6 +27,7 @@ public class MainActivity : Activity() {
     private var isGeminiActive = false
     private var isWebRTCActive = false
     private var audioManager: AudioManager? = null
+    private var openClawDiscovery: OpenClawDiscovery? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,6 +105,57 @@ public class MainActivity : Activity() {
         layout.addView(webrtcBtn)
 
         setContentView(layout)
+
+        // Start dynamic mDNS autodiscovery for OpenClaw Gateway on launch
+        openClawDiscovery = OpenClawDiscovery(this) { host, port ->
+            runOnUiThread {
+                gatewayIpInput.setText(host)
+                OpenClawToolRouter.shared.gatewayIP = host
+                OpenClawToolRouter.shared.gatewayPort = port
+                statusText.text = "Status: OpenClaw Resolved at $host:$port"
+                statusText.setTextColor(0xFF10B981.toInt())
+                Toast.makeText(this, "Discovered OpenClaw Gateway at $host:$port", Toast.LENGTH_SHORT).show()
+            }
+
+            // Dynamically pull configuration from dashboard server on port 18790
+            val client = okhttp3.OkHttpClient()
+            val request = okhttp3.Request.Builder()
+                .url("http://$host:18790/api/config")
+                .build()
+
+            client.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    System.err.println("[MainActivity] Failed to pull config from dashboard server: ${e.message}")
+                }
+
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    response.use { resp ->
+                        if (resp.isSuccessful) {
+                            val bodyString = resp.body?.string() ?: ""
+                            try {
+                                val json = org.json.JSONObject(bodyString)
+                                val geminiKey = json.optString("geminiApiKey", "")
+                                val gatewayTok = json.optString("gatewayToken", "")
+                                
+                                runOnUiThread {
+                                    if (geminiKey.isNotEmpty()) {
+                                        apiKeyInput.setText(geminiKey)
+                                    }
+                                    if (gatewayTok.isNotEmpty()) {
+                                        gatewayTokenInput.setText(gatewayTok)
+                                        OpenClawToolRouter.shared.bearerToken = gatewayTok
+                                    }
+                                    Toast.makeText(this@MainActivity, "Credentials auto-configured over LAN!", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                System.err.println("[MainActivity] Failed to parse config JSON: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        openClawDiscovery?.startDiscovery()
     }
 
     private fun toggleGeminiLive() {
@@ -190,6 +242,9 @@ public class MainActivity : Activity() {
         VideoPipeline.shared.onFrameProcessed = null
         VideoPipeline.shared.stopSessionProactively()
 
+        // 3. Disconnect WebSocket session cleanly to prevent network leaks
+        GeminiLiveService.shared.disconnect()
+
         isGeminiActive = false
         geminiBtn.text = "Start Gemini Live Session"
         statusText.text = "Status: Idle"
@@ -257,6 +312,11 @@ public class MainActivity : Activity() {
             stopWebRTCSession()
         }
         VideoPipeline.shared.stopSessionProactively()
+        
+        // Stop dynamic autodiscovery listener to prevent memory leaks
+        openClawDiscovery?.stopDiscovery()
+        openClawDiscovery = null
+        
         System.out.println("[MainActivity] Destroyed. Clean release complete.")
     }
 }

@@ -96,11 +96,21 @@ public class OpenClawToolRouter private constructor() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 1. Simulate capturing 1080p frame image
-                val mockBitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
-                val outputStream = ByteArrayOutputStream()
-                mockBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
-                val jpegBytes = outputStream.toByteArray()
+                // 1. Retrieve the latest active frame bytes from the smart glasses camera stream session
+                val jpegBytes = VideoPipeline.shared.lastFrameBytes ?: run {
+                    System.out.println("[OpenClawToolRouter] No active camera stream frame cached yet; generating dynamic fallback status placeholder...")
+                    val fallbackBitmap = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(fallbackBitmap)
+                    val paint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = 24f
+                    }
+                    canvas.drawColor(android.graphics.Color.BLACK)
+                    canvas.drawText("VisionClaw: No Active Camera Frame Captured", 50f, 240f, paint)
+                    val outputStream = java.io.ByteArrayOutputStream()
+                    fallbackBitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+                    outputStream.toByteArray()
+                }
 
                 // 2. Perform Multipart HTTP POST upload asynchronously
                 val uploadUrl = "http://$gatewayIP:$gatewayPort/workspace/upload"

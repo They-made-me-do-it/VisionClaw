@@ -5,3 +5,7 @@ node_modules/
 .idea/
 .vscode/
 *.local
+.env
+artifacts/
+assets/capture_*.jpg
+_handoff/*.log

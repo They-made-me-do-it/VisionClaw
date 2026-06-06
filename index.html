@@ -25,15 +25,16 @@
         <div class="system-status">
             <span class="status-label">API Gateway:</span>
             <span id="gateway-status" class="status-value status-ok">Connected</span>
+            <span class="status-label" style="margin-left: 1.5rem;">Gemini Live:</span>
+            <span id="socket-status-badge" class="status-value status-error">DISCONNECTED</span>
         </div>
     </header>
 
     <main>
-        <!-- Gemini Live Gateway Portal -->
-        <section class="card card-portal" style="margin-bottom: 1.5rem;">
+        <!-- Gemini Live Gateway Portal (Hidden: Auto-configured and Auto-connected) -->
+        <section class="card card-portal" style="display: none;">
             <div class="card-header">
                 <h2>Gemini Live WebSocket Client Ingress</h2>
-                <span id="socket-status-badge" class="status-value status-error">DISCONNECTED</span>
             </div>
             <div class="portal-form" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
                 <div class="form-row" style="flex: 1; min-width: 200px;">
@@ -167,7 +168,7 @@
             </div>
             <div class="terminal-body" id="wss-logs">
                 <div class="terminal-line system">WSS Connection: established to wss://generativelanguage.googleapis.com/...</div>
-                <div class="terminal-line client">&gt; BidiGenerateContentSetup [Target: gemini-live-2.5-flash-native-audio] sent.</div>
+                <div class="terminal-line client">&gt; BidiGenerateContentSetup [Target: gemini-2.5-flash-native-audio-latest] sent.</div>
             </div>
         </section>
 

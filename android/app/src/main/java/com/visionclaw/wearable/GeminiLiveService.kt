@@ -21,6 +21,13 @@ public class GeminiLiveService private constructor() {
     private val client = OkHttpClient()
     private var webSocket: WebSocket? = null
     
+    private var apiKeyCached: String? = null
+    private var reconnectAttempts = 0
+    private val maxReconnectAttempts = 10
+    private val baseDelayMs = 1000L
+    private val maxDelayMs = 30000L
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    
     // Resumption token to recover state after network drops/reconnections
     private var lastResumptionToken: String? = null
     
@@ -37,12 +44,14 @@ public class GeminiLiveService private constructor() {
      * Initializes the Secure WebSocket connection to the Gemini Live API
      */
     public fun connect(apiKey: String) {
+        this.apiKeyCached = apiKey
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey"
         val request = Request.Builder().url(url).build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 System.out.println("[GeminiLiveService] WebSocket open. Sending setup...")
+                reconnectAttempts = 0
                 sendSetupMessage()
             }
 
@@ -51,7 +60,9 @@ public class GeminiLiveService private constructor() {
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                handleServerMessage(bytes.utf8())
+                // If it is binary audio data from the server, play it directly
+                // The binary frame is raw 24 kHz mono Int16 PCM audio
+                audioManager?.playAudio(bytes.toByteArray())
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -71,7 +82,7 @@ public class GeminiLiveService private constructor() {
      */
     private fun sendSetupMessage() {
         val setup = JSONObject()
-        setup.put("model", "models/gemini-live-2.5-flash-native-audio")
+        setup.put("model", "models/gemini-2.5-flash-native-audio-latest")
 
         val generationConfig = JSONObject()
         val modalities = JSONArray()
@@ -91,7 +102,7 @@ public class GeminiLiveService private constructor() {
 
         // Configuration to configure context window compression block to survive 2-min session limits
         val slidingWindow = JSONObject()
-        slidingWindow.put("windowSizeLimit", 2000)
+        slidingWindow.put("targetTokens", 2000)
         val contextWindowCompression = JSONObject()
         contextWindowCompression.put("slidingWindow", slidingWindow)
         setup.put("contextWindowCompression", contextWindowCompression)
@@ -104,8 +115,6 @@ public class GeminiLiveService private constructor() {
         val functionDecl = JSONObject()
         functionDecl.put("name", "execute")
         functionDecl.put("description", "Execute local action via OpenClaw Gateway on LAN")
-        functionDecl.put("behavior", "NON_BLOCKING")
-        functionDecl.put("scheduling", "INTERRUPT")
 
         val parameters = JSONObject()
         parameters.put("type", "OBJECT")
@@ -133,11 +142,15 @@ public class GeminiLiveService private constructor() {
         tools.put(toolContainer)
         setup.put("tools", tools)
 
-        // Recover previous context history using resumption token if set
+        // Enable and configure session resumption
+        val sessionResumption = JSONObject()
         lastResumptionToken?.let { token ->
             System.out.println("[GeminiLiveService] Resuming session with token: ${token.take(8)}...")
+            sessionResumption.put("handle", token)
+            // For backward compatibility/mock checks
             setup.put("resumptionToken", token)
         }
+        setup.put("sessionResumption", sessionResumption)
 
         val clientMessage = JSONObject()
         clientMessage.put("setup", setup)
@@ -176,8 +189,16 @@ public class GeminiLiveService private constructor() {
             // 2. Session Resumption updates
             if (json.has("sessionResumptionUpdate")) {
                 val resumption = json.getJSONObject("sessionResumptionUpdate")
-                if (resumption.has("resumptionToken")) {
-                    lastResumptionToken = resumption.getString("resumptionToken")
+                val token = if (resumption.has("new_handle")) {
+                    resumption.getString("new_handle")
+                } else if (resumption.has("resumptionToken")) {
+                    resumption.getString("resumptionToken")
+                } else if (resumption.has("newHandle")) {
+                    resumption.getString("newHandle")
+                } else null
+
+                if (token != null) {
+                    lastResumptionToken = token
                     System.out.println("[GeminiLiveService] Cached session resumption token: ${lastResumptionToken?.take(10)}...")
                 }
             }
@@ -291,8 +312,27 @@ public class GeminiLiveService private constructor() {
         webSocket?.send(clientMessage.toString())
     }
 
+    public fun disconnect() {
+        apiKeyCached = null
+        webSocket?.close(1000, "User Disconnected")
+        webSocket = null
+        reconnectAttempts = 0
+        System.out.println("[GeminiLiveService] WebSocket manually disconnected.")
+    }
+
     private fun handleDisconnect() {
-        // Automatic reconnection handling can be plugged in using exponents.
-        // It will automatically reuse the cached lastResumptionToken during the next setup payload.
+        val apiKey = apiKeyCached ?: return
+        if (reconnectAttempts >= maxReconnectAttempts) {
+            System.err.println("[GeminiLiveService] Max reconnect attempts ($maxReconnectAttempts) reached. Reconnection aborted.")
+            return
+        }
+        val delay = Math.min(baseDelayMs * (1L shl reconnectAttempts), maxDelayMs)
+        reconnectAttempts++
+        System.out.println("[GeminiLiveService] Reconnecting in $delay ms (Attempt $reconnectAttempts/$maxReconnectAttempts)...")
+        mainHandler.postDelayed({
+            if (apiKeyCached != null) {
+                connect(apiKeyCached!!)
+            }
+        }, delay)
     }
 }
