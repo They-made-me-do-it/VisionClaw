@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cameraCtx.save();
             cameraCtx.translate(cameraCanvas.width, 0);
             cameraCtx.scale(-1, 1);
-            cameraCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
+            cameraCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
             cameraCtx.restore();
         } else if (!cameraConnected) {
             cameraCtx.fillStyle = '#ef4444';
@@ -459,7 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         tempCtx.translate(tempCanvas.width, 0);
         tempCtx.scale(-1, 1);
-        tempCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
+        tempCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
 
         tempCanvas.toBlob(blob => {
             if (!blob) return;
@@ -680,7 +680,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         tempCtx.translate(tempCanvas.width, 0);
         tempCtx.scale(-1, 1);
-        tempCtx.drawImage(video, -x - (video.videoWidth * scale), y, video.videoWidth * scale, video.videoHeight * scale);
+        tempCtx.drawImage(video, x, y, video.videoWidth * scale, video.videoHeight * scale);
 
         tempCanvas.toBlob(blob => {
             if (!blob) return;

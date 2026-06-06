@@ -208,7 +208,63 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 4. Static Files Server
+    // 4. Live API Route: Amazon Inventory Bypass (Rainforest Proxy)
+    if (req.method === 'POST' && req.url === '/api/amazon/search') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                const query = encodeURIComponent(payload.query || '');
+                const apiKey = envConfig['RAINFOREST_API_KEY'];
+                
+                if (!apiKey) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ status: 'ERROR', message: 'Rainforest API key missing from .env' }));
+                    return;
+                }
+
+                const url = `https://api.rainforestapi.com/request?api_key=${apiKey}&type=search&amazon_domain=amazon.com&search_term=${query}`;
+                
+                const https = require('https');
+                https.get(url, (apiRes) => {
+                    let data = '';
+                    apiRes.on('data', chunk => { data += chunk; });
+                    apiRes.on('end', () => {
+                        try {
+                            const json = JSON.parse(data);
+                            if (json.request_info && !json.request_info.success) {
+                                res.writeHead(500, { 'Content-Type': 'application/json' });
+                                res.end(JSON.stringify({ status: 'ERROR', message: json.request_info.message || 'API request failed' }));
+                                return;
+                            }
+                            // Extract top 3 results
+                            const results = (json.search_results || []).slice(0, 3).map(item => ({
+                                title: item.title,
+                                price: item.price ? item.price.raw : 'N/A',
+                                link: item.link
+                            }));
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify(results));
+                        } catch (e) {
+                            res.writeHead(500, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ status: 'ERROR', message: 'Failed to parse Rainforest API response' }));
+                        }
+                    });
+                }).on('error', (err) => {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ status: 'ERROR', message: err.message }));
+                });
+
+            } catch (err) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'ERROR', message: 'Invalid payload' }));
+            }
+        });
+        return;
+    }
+
+    // 5. Static Files Server
     let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : req.url);
     const extname = String(path.extname(filePath)).toLowerCase();
     const contentType = MIME_TYPES[extname] || 'application/octet-stream';
