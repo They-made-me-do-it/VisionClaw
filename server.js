@@ -90,7 +90,7 @@ const server = http.createServer((req, res) => {
                 });
 
                 const gatewayToken = envConfig['OPENCLAW_GATEWAY_TOKEN'] || 'oc_live_token_7a9c8b3d2e1f0';
-                const authHeader = req.headers['authorization'] || `Bearer ${gatewayToken}`;
+                const authHeader = `Bearer ${gatewayToken}`;
 
                 const proxyReq = http.request({
                     hostname: gatewayHost,
@@ -106,28 +106,17 @@ const server = http.createServer((req, res) => {
                     let responseData = '';
                     proxyRes.on('data', chunk => { responseData += chunk; });
                     proxyRes.on('end', () => {
-                        if (proxyRes.statusCode === 200) {
-                            res.writeHead(200, { 'Content-Type': 'application/json' });
-                            res.end(responseData);
-                        } else {
-                            console.log(`[Proxy Link Warning] Gateway returned status ${proxyRes.statusCode}. Falling back to simulated response...`);
-                            res.writeHead(200, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({
-                                status: 'SUCCESS',
-                                message: `OpenClaw gateway simulated tool '${toolName}' execution completed successfully (status ${proxyRes.statusCode} fallback).`,
-                                timestamp: new Date().toISOString()
-                            }));
-                        }
+                        res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' });
+                        res.end(responseData);
                     });
                 });
 
                 proxyReq.on('error', (err) => {
-                    console.log(`[Proxy Link Refused] ${err.message}. Falling back to simulated response...`);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    console.error(`[Proxy Link Refused] ${err.message}`);
+                    res.writeHead(502, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({
-                        status: 'SUCCESS',
-                        message: `OpenClaw gateway simulated tool '${toolName}' execution completed successfully (offline fallback).`,
-                        timestamp: new Date().toISOString()
+                        status: 'ERROR',
+                        message: `OpenClaw gateway is offline or unreachable at ${gatewayHost}:${gatewayPort} (${err.message})`
                     }));
                 });
 

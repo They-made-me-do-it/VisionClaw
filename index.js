@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     imgFallback.src = 'assets/egocentric_desk.png';
 
     // WebSocket state
+    let openclawGatewayToken = 'oc_live_token_7a9c8b3d2e1f0';
     let ws = null;
     let lastResumptionToken = null;
     let sendVideoInterval = null;
@@ -572,7 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer oc_live_token_7a9c8b3d2e1f0'
+                'Authorization': `Bearer ${openclawGatewayToken}`
             },
             body: JSON.stringify({
                 tool: toolName,
@@ -583,15 +584,23 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(res => {
             const end = performance.now();
             rttEl.innerText = `${Math.round(end - start)} ms`;
+            if (!res.ok) {
+                return res.json().then(errData => {
+                    const errMsg = (errData.error && errData.error.message) || errData.message || `HTTP ${res.status}`;
+                    throw new Error(errMsg);
+                });
+            }
             return res.json();
         })
         .then(data => {
-            if (data.status === 'SUCCESS') {
+            if (data.ok || data.status === 'SUCCESS' || data.result) {
                 failures = 0;
-                appendTerminalLog(clawLogsEl, `Tool Success: ${data.message}`, "success");
-                sendToolWSSResponse(callId, { result: data.message }, null);
+                const msg = data.result || data.message || "Execution completed successfully.";
+                appendTerminalLog(clawLogsEl, `Tool Success: ${msg}`, "success");
+                sendToolWSSResponse(callId, { result: msg }, null);
             } else {
-                throw new Error(data.message);
+                const errMsg = (data.error && data.error.message) || data.message || "Unknown gateway error";
+                throw new Error(errMsg);
             }
         })
         .catch(err => {
@@ -696,7 +705,7 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer oc_live_token_7a9c8b3d2e1f0'
+                'Authorization': `Bearer ${openclawGatewayToken}`
             },
             body: JSON.stringify({
                 tool: toolName,
@@ -707,10 +716,17 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(res => {
             const endTimestamp = performance.now();
             rttEl.innerText = `${Math.round(endTimestamp - startTimestamp)} ms`;
+            if (!res.ok) {
+                return res.json().then(errData => {
+                    const errMsg = (errData.error && errData.error.message) || errData.message || `HTTP ${res.status}`;
+                    throw new Error(errMsg);
+                });
+            }
             return res.json();
         })
         .then(data => {
-            appendTerminalLog(clawLogsEl, `Tool Response: ${data.message}`, "success");
+            const msg = data.result || data.message || "Execution completed successfully.";
+            appendTerminalLog(clawLogsEl, `Tool Response: ${msg}`, "success");
         })
         .catch(err => {
             failures++;
@@ -802,6 +818,9 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch('/api/config')
     .then(res => res.json())
     .then(config => {
+        if (config.gatewayToken) {
+            openclawGatewayToken = config.gatewayToken;
+        }
         if (config.geminiApiKey) {
             apiKeyInput.value = config.geminiApiKey;
             appendTerminalLog(wssLogsEl, "Automatically populated Gemini API Key from .env. Connecting...", "success");
