@@ -97,6 +97,7 @@ const server = http.createServer((req, res) => {
                     port: gatewayPort,
                     path: '/tools/invoke',
                     method: 'POST',
+                    timeout: 5000,
                     headers: {
                         'Content-Type': 'application/json',
                         'Content-Length': Buffer.byteLength(postData),
@@ -109,6 +110,10 @@ const server = http.createServer((req, res) => {
                         res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' });
                         res.end(responseData);
                     });
+                });
+
+                proxyReq.on('timeout', () => {
+                    proxyReq.destroy(new Error('Gateway request timed out after 5000ms'));
                 });
 
                 proxyReq.on('error', (err) => {

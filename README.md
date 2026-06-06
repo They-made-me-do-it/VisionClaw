@@ -62,7 +62,7 @@ graph TD
 3.  **Mutual Exclusion Media Guard**:
     *   Guards the Android audio focus to prevent contention between WebRTC POV broadcasting (24 fps, 2.5 Mbps) and the Gemini Live API session. Activating one stream automatically suspends the other.
 4.  **Asynchronous Tool Dispatch**:
-    *   Leverages `gemini-2.5-flash-native-audio-latest` with `"behavior": "NON_BLOCKING"` and `"scheduling": "INTERRUPT"` parameters. Enables conversational continuation during long-running tool executions.
+    *   Leverages `gemini-live-2.5-flash-native-audio` with `"behavior": "NON_BLOCKING"` and `"scheduling": "INTERRUPT"` parameters. Enables conversational continuation during long-running tool executions.
 5.  **OpenClaw Authorization**:
     *   Routes intercepted tool calls to the official local OpenClaw gateway (on port `18789`) with secure `Authorization: Bearer <TOKEN>` header validation.
 
@@ -88,10 +88,8 @@ graph TD
 │           ├── AudioManager.kt      # Resampling, Sco Routing, Playback
 │           ├── VideoPipeline.kt     # Resolution scaling & 1 fps throttling
 │           ├── WebRTCClient.kt      # WebSocket signaling & WebRTC broadcast
-│           ├── OpenClawDiscovery.kt # OpenClaw service discovery and LAN scans
-│           ├── OpenClawToolRouter.kt# Gateway proxy client, Host headers, and Protocol v3 WSS
 │           └── GeminiLiveService.kt # OkHttp WebSocket loop & context window compression
-├── ios/                        # iOS client files (aligned with Android)
+├── ios/                        # iOS client files (Ignored per user directive)
 └── _handoff/                   # Handoff logs & diagnostic reports
 ```
 
