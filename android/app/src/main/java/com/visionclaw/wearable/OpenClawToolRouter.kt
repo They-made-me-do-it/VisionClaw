@@ -7,11 +7,13 @@ package com.visionclaw.wearable
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -92,7 +94,7 @@ public class OpenClawToolRouter private constructor() {
     private fun executeCaptureAndUploadPhoto(arguments: JSONObject, callback: ToolCallback) {
         System.out.println("[OpenClawToolRouter] Launching async capture_photo capture thread...")
 
-        backgroundExecutor.submit {
+        CoroutineScope(Dispatchers.IO).launch {
             try {
                 // 1. Simulate capturing 1080p frame image
                 val mockBitmap = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)

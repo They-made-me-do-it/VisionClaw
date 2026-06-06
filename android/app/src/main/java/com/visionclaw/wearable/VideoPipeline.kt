@@ -23,6 +23,18 @@ public class DATStreamConfig(
     public val targetFps: Int
 )
 
+public class DATDeviceSession {
+    public fun stop() {
+        System.out.println("[DATDeviceSession] Stopping wearable hardware session proactively to free broadcast slot.")
+    }
+}
+
+public class DATVideoStream {
+    public fun stop() {
+        System.out.println("[DATVideoStream] Stopping video stream proactively.")
+    }
+}
+
 public interface MWDatFrame {
     public fun getWidth(): Int
     public fun getHeight(): Int
@@ -47,15 +59,31 @@ public class VideoPipeline {
     @Volatile
     private var isFrameInFlight = false
 
+    // Active SDK 0.7.0 references for strict lifecycle management
+    private var activeSession: DATDeviceSession? = null
+    private var activeStream: DATVideoStream? = null
+
     // Callback targeting the Gemini Live WSS client upload channel
     public var onFrameProcessed: ((String) -> Unit)? = null
 
     /**
-     * Connects to the DAT wearable camera pipeline
+     * Connects to the DAT wearable camera pipeline (SDK 0.7.0)
      */
-    public fun initializeDATStream(device: Any) {
-        System.out.println("[VideoPipeline] Initializing DAT Camera stream at resolution 504x896 (Medium)")
-        // E.g., device.registerStreamListener(streamConfig, frameListener)
+    public fun initializeDATStream(session: DATDeviceSession, stream: DATVideoStream) {
+        this.activeSession = session
+        this.activeStream = stream
+        System.out.println("[VideoPipeline] Initializing DAT Camera stream at resolution 504x896 (Medium) and 1 fps target directly at hardware configuration.")
+    }
+
+    /**
+     * Strict wearable broadcast session hygiene: stops stream and session proactively to unlock broadcast slot
+     */
+    public fun stopSessionProactively() {
+        System.out.println("[VideoPipeline] Terminating stream and session proactively to free hardware broadcast slot.")
+        activeStream?.stop()
+        activeSession?.stop()
+        activeStream = null
+        activeSession = null
     }
 
     /**

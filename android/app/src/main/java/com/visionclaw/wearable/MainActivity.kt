@@ -166,8 +166,8 @@ public class MainActivity : Activity() {
                 GeminiLiveService.shared.sendMediaChunk("image/jpeg", base64Frame)
             }
         }
-        // Initialize DAT stream (e.g. passing a dummy device target object)
-        VideoPipeline.shared.initializeDATStream(Any())
+        // Initialize DAT stream (using mock references matching SDK 0.7.0 lifecycle API)
+        VideoPipeline.shared.initializeDATStream(DATDeviceSession(), DATVideoStream())
 
         // 3. Connect the websocket
         GeminiLiveService.shared.connect(apiKey)
@@ -186,8 +186,9 @@ public class MainActivity : Activity() {
         audioManager = null
         GeminiLiveService.shared.audioManager = null
 
-        // 2. Reset video pipeline callbacks
+        // 2. Reset video pipeline callbacks and stop wearable session to free broadcast slot
         VideoPipeline.shared.onFrameProcessed = null
+        VideoPipeline.shared.stopSessionProactively()
 
         isGeminiActive = false
         geminiBtn.text = "Start Gemini Live Session"
@@ -243,6 +244,7 @@ public class MainActivity : Activity() {
         if (isWebRTCActive) {
             stopWebRTCSession()
         }
+        VideoPipeline.shared.stopSessionProactively()
         System.out.println("[MainActivity] Paused. Releasing hardware locks to avoid resource contention.")
     }
 
@@ -254,6 +256,7 @@ public class MainActivity : Activity() {
         if (isWebRTCActive) {
             stopWebRTCSession()
         }
+        VideoPipeline.shared.stopSessionProactively()
         System.out.println("[MainActivity] Destroyed. Clean release complete.")
     }
 }
