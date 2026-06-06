@@ -12,6 +12,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 public class MainActivity : Activity() {
 
@@ -23,6 +25,16 @@ public class MainActivity : Activity() {
     private lateinit var geminiBtn: Button
     private lateinit var webrtcBtn: Button
     private lateinit var statusText: TextView
+
+    private lateinit var backendToggleBtn: Button
+    private lateinit var mmduet2Card: LinearLayout
+    private lateinit var mmduet2ResetBtn: Button
+    private lateinit var mmduet2PromptInput: EditText
+    private lateinit var mmduet2OverlayText: TextView
+
+    private var activeBackend: String = "Gemini Live" // or "MMDuet2"
+    private var mmduet2FrameCount = 0
+    private var mmduet2KVCacheSize = 0
 
     private var isGeminiActive = false
     private var isWebRTCActive = false
@@ -81,6 +93,80 @@ public class MainActivity : Activity() {
             setPadding(20, 20, 20, 20)
         }
         layout.addView(signalingUrlInput)
+
+        // MMDuet2 Backend Selector & Tab Controls Card
+        backendToggleBtn = Button(this).apply {
+            text = "Active Backend: Gemini Live"
+            setBackgroundColor(0xFF3B82F6.toInt()) // premium blue
+            setTextColor(0xFFFFFFFF.toInt())
+            setOnClickListener {
+                if (activeBackend == "Gemini Live") {
+                    activeBackend = "MMDuet2"
+                    text = "Active Backend: MMDuet2"
+                    setBackgroundColor(0xFF8B5CF6.toInt()) // premium purple
+                    mmduet2Card.visibility = android.view.View.VISIBLE
+                } else {
+                    activeBackend = "Gemini Live"
+                    text = "Active Backend: Gemini Live"
+                    setBackgroundColor(0xFF3B82F6.toInt()) // premium blue
+                    mmduet2Card.visibility = android.view.View.GONE
+                }
+            }
+        }
+        layout.addView(backendToggleBtn)
+
+        mmduet2Card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(30, 30, 30, 30)
+            visibility = android.view.View.GONE
+            val drawable = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF1E293B.toInt()) // dark card color
+                setStroke(2, 0xFF334155.toInt())
+                cornerRadius = 12f
+            }
+            background = drawable
+            
+            // Layout params to add spacing
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 20, 0, 20)
+            }
+            layoutParams = params
+        }
+        
+        val mmduet2Title = TextView(this).apply {
+            text = "MMDuet2 Configuration"
+            textSize = 16f
+            setTextColor(0xFFF3F4F6.toInt())
+            setPadding(0, 0, 0, 10)
+        }
+        mmduet2Card.addView(mmduet2Title)
+        
+        mmduet2PromptInput = EditText(this).apply {
+            hint = "Prompt Configurations"
+            setHintTextColor(0xFF9CA3AF.toInt())
+            setTextColor(0xFFF3F4F6.toInt())
+            setPadding(10, 10, 10, 10)
+        }
+        mmduet2Card.addView(mmduet2PromptInput)
+        
+        mmduet2ResetBtn = Button(this).apply {
+            text = "Reset Server Configuration"
+            setOnClickListener { resetMMDuet2Server() }
+        }
+        mmduet2Card.addView(mmduet2ResetBtn)
+        
+        mmduet2OverlayText = TextView(this).apply {
+            text = "MMDuet2 Active Parameters:\nResolution: 504x896 (Medium)\nFPS: 1.0 (Throttled)\nFrame Count: 0\nIn-flight Status: Idle\nKV Cache Size: 0 / 20000 tokens"
+            textSize = 12f
+            setTextColor(0xFF9CA3AF.toInt())
+            setPadding(0, 10, 0, 0)
+        }
+        mmduet2Card.addView(mmduet2OverlayText)
+        
+        layout.addView(mmduet2Card)
 
         // Status field
         statusText = TextView(this).apply {
@@ -215,18 +301,32 @@ public class MainActivity : Activity() {
         // 2. Wire up VideoPipeline frame callback to stream egocentric frames to WSS
         VideoPipeline.shared.onFrameProcessed = { base64Frame ->
             if (isGeminiActive) {
-                GeminiLiveService.shared.sendMediaChunk("image/jpeg", base64Frame)
+                if (activeBackend == "Gemini Live") {
+                    GeminiLiveService.shared.sendMediaChunk("image/jpeg", base64Frame)
+                } else if (activeBackend == "MMDuet2") {
+                    streamFrameToMMDuet2(base64Frame)
+                }
             }
         }
         // Initialize DAT stream (using mock references matching SDK 0.7.0 lifecycle API)
         VideoPipeline.shared.initializeDATStream(DATDeviceSession(), DATVideoStream())
 
-        // 3. Connect the websocket
-        GeminiLiveService.shared.connect(apiKey)
+        if (activeBackend == "Gemini Live") {
+            // 3. Connect the websocket
+            GeminiLiveService.shared.connect(apiKey)
+            
+            // 4. Connect OpenClaw Event Client WSS earlier
+            OpenClawToolRouter.shared.connectEventClient()
+            
+            statusText.text = "Status: Connected to Gemini Live WSS"
+        } else {
+            // Automatically reset the server configuration at the start of a session
+            resetMMDuet2Server()
+            statusText.text = "Status: Connected to MMDuet2 API"
+        }
         
         isGeminiActive = true
         geminiBtn.text = "Disconnect Gemini Live"
-        statusText.text = "Status: Connected to Gemini Live WSS"
         statusText.setTextColor(0xFF10B981.toInt()) // Success color
     }
 
@@ -244,6 +344,9 @@ public class MainActivity : Activity() {
 
         // 3. Disconnect WebSocket session cleanly to prevent network leaks
         GeminiLiveService.shared.disconnect()
+
+        // 4. Disconnect OpenClaw Event Client WSS
+        OpenClawToolRouter.shared.disconnectEventClient()
 
         isGeminiActive = false
         geminiBtn.text = "Start Gemini Live Session"
@@ -318,5 +421,97 @@ public class MainActivity : Activity() {
         openClawDiscovery = null
         
         System.out.println("[MainActivity] Destroyed. Clean release complete.")
+    }
+
+    private fun streamFrameToMMDuet2(base64Frame: String) {
+        val host = OpenClawToolRouter.shared.gatewayIP
+        val url = "http://$host:8000/frame"
+        
+        val payload = org.json.JSONObject()
+        payload.put("image", base64Frame)
+        payload.put("prompt", mmduet2PromptInput.text.toString().trim())
+        
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val requestBody = payload.toString().toRequestBody(mediaType)
+        
+        val request = okhttp3.Request.Builder()
+            .url(url)
+            .post(requestBody)
+            .build()
+            
+        val client = okhttp3.OkHttpClient()
+        client.newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                System.err.println("[MainActivity] MMDuet2 Feed Failed: ${e.message}")
+            }
+            
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                response.use { resp ->
+                    if (resp.isSuccessful) {
+                        val bodyString = resp.body?.string() ?: ""
+                        try {
+                            val json = org.json.JSONObject(bodyString)
+                            val kvCache = json.optInt("kv_cache_size", 0)
+                            
+                            runOnUiThread {
+                                mmduet2FrameCount++
+                                mmduet2KVCacheSize = kvCache
+                                updateMMDuet2Overlay()
+                                
+                                // Guardrail: auto reset if kvCache exceeds 20,000 tokens
+                                if (kvCache >= 20000) {
+                                    System.out.println("[MainActivity] KV Cache exceeds 20,000 tokens ($kvCache). Triggering auto-reset.")
+                                    resetMMDuet2Server()
+                                    Toast.makeText(this@MainActivity, "Auto-Reset KV Cache (Limit Exceeded)", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            System.err.println("[MainActivity] Failed to parse MMDuet2 feed response: ${e.message}")
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    private fun resetMMDuet2Server() {
+        val host = OpenClawToolRouter.shared.gatewayIP
+        val url = "http://$host:8000/reset"
+        val request = okhttp3.Request.Builder()
+            .url(url)
+            .post("{}".toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+            
+        val client = okhttp3.OkHttpClient()
+        client.newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                System.err.println("[MainActivity] MMDuet2 reset failed: ${e.message}")
+            }
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                response.use { resp ->
+                    if (resp.isSuccessful) {
+                        runOnUiThread {
+                            mmduet2KVCacheSize = 0
+                            updateMMDuet2Overlay()
+                            Toast.makeText(this@MainActivity, "MMDuet2 Server Reset Successful!", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        System.err.println("[MainActivity] MMDuet2 reset failed with code: ${resp.code}")
+                    }
+                }
+            }
+        })
+    }
+
+    private fun updateMMDuet2Overlay() {
+        val inFlightStr = if (VideoPipeline.shared.lastFrameBytes != null) "Active" else "Idle"
+        mmduet2OverlayText.text = """
+            MMDuet2 Active Parameters:
+            Resolution: 504x896 (Medium)
+            FPS: 1.0 (Throttled)
+            Frame Count: $mmduet2FrameCount
+            In-flight Status: $inFlightStr
+            KV Cache Size: $mmduet2KVCacheSize / 20000 tokens
+        """.trimIndent()
     }
 }

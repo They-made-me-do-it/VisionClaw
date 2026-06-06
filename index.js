@@ -303,11 +303,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 3. Gemini Live WSS Connection Handler ---
+    let userDisconnected = false;
+    let reconnectTimeout = null;
+
     connectWsBtn.addEventListener('click', () => {
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
             alert("Please enter a valid Gemini API Key to connect.");
             return;
+        }
+
+        userDisconnected = false;
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
         }
 
         connectWsBtn.disabled = true;
@@ -351,10 +360,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ws.onclose = () => {
             handleWSSDisconnect();
+            if (!userDisconnected) {
+                appendTerminalLog(wssLogsEl, "WSS closed unexpectedly. Retrying in 5s...", "warning");
+                reconnectTimeout = setTimeout(() => {
+                    appendTerminalLog(wssLogsEl, "Reconnecting WebSocket...", "system");
+                    connectWsBtn.click();
+                }, 5000);
+            }
         };
     });
 
     disconnectWsBtn.addEventListener('click', () => {
+        userDisconnected = true;
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+        }
         if (ws) {
             ws.close();
         }

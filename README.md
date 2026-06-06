@@ -88,8 +88,10 @@ graph TD
 │           ├── AudioManager.kt      # Resampling, Sco Routing, Playback
 │           ├── VideoPipeline.kt     # Resolution scaling & 1 fps throttling
 │           ├── WebRTCClient.kt      # WebSocket signaling & WebRTC broadcast
+│           ├── OpenClawDiscovery.kt # OpenClaw service discovery and LAN scans
+│           ├── OpenClawToolRouter.kt# Gateway proxy client, Host headers, and Protocol v3 WSS
 │           └── GeminiLiveService.kt # OkHttp WebSocket loop & context window compression
-├── ios/                        # iOS client files (Ignored per user directive)
+├── ios/                        # iOS client files (aligned with Android)
 └── _handoff/                   # Handoff logs & diagnostic reports
 ```
 

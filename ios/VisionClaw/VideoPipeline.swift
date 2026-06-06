@@ -52,6 +52,9 @@ public final class VideoPipeline: NSObject, MWDatVideoStreamDelegate {
     
     // In-flight transmission check to prevent network backlog and memory leaks
     private var isFrameInFlight = false
+
+    // Cache for latest frame bytes to expose to other tools (like capture_photo)
+    public var lastFrameBytes: Data?
     
     // Callback to send the Base64 JPEG frame payload upstream
     public var onFrameProcessed: ((String) -> Void)?
@@ -110,6 +113,9 @@ public final class VideoPipeline: NSObject, MWDatVideoStreamDelegate {
                 self.isFrameInFlight = false
                 return
             }
+            
+            // Cache the real frame bytes for downstream photo-capture tools
+            self.lastFrameBytes = jpegData
             
             // 4. Base64 Encode the compressed frame
             let base64String = jpegData.base64EncodedString()

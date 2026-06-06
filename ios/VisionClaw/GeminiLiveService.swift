@@ -7,6 +7,10 @@ import Foundation
 public final class GeminiLiveService: NSObject {
     public static let shared = GeminiLiveService()
     
+    public var activeBackend: String = "Gemini Live"
+    private var mmduet2FrameCount = 0
+    private var mmduet2KVCacheSize = 0
+    
     private var webSocketTask: URLSessionWebSocketTask?
     private let urlSession = URLSession(configuration: .default)
     
@@ -26,6 +30,12 @@ public final class GeminiLiveService: NSObject {
     
     /// Establishes the WebSocket connection to Gemini Live API
     public func connect(apiKey: String) {
+        if activeBackend == "MMDuet2" {
+            print("[GeminiLiveService] Connecting to MMDuet2 active backend. Triggering startup reset...")
+            resetMMDuet2Server()
+            return
+        }
+        
         let urlString = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=\(apiKey)"
         guard let url = URL(string: urlString) else { return }
         
@@ -39,6 +49,9 @@ public final class GeminiLiveService: NSObject {
         
         // 2. Start receiving server messages
         receiveMessages()
+        
+        // 3. Connect OpenClaw Event Client earlier
+        OpenClawToolRouter.shared.connectEventClient()
     }
     
     /// Sends the initial BidiGenerateContentSetup payload to initialize the model
@@ -69,6 +82,7 @@ public final class GeminiLiveService: NSObject {
                             [
                                 "name": "execute",
                                 "description": "Execute local tool action via the OpenClaw Gateway on the LAN",
+                                "behavior": "NON_BLOCKING",
                                 "parameters": [
                                     "type": "OBJECT",
                                     "properties": [
@@ -210,7 +224,8 @@ public final class GeminiLiveService: NSObject {
     private func sendToolResponse(callId: String, successPayload: [String: Any]? = nil, errorMsg: String? = nil) {
         var functionResponse: [String: Any] = [
             "id": callId,
-            "name": "execute"
+            "name": "execute",
+            "scheduling": "INTERRUPT"
         ]
         
         if let error = errorMsg {
@@ -230,6 +245,13 @@ public final class GeminiLiveService: NSObject {
     
     /// Sends Base64 audio/video inputs upstream
     public func sendMediaChunk(mimeType: String, base64Data: String) {
+        if activeBackend == "MMDuet2" {
+            if mimeType == "image/jpeg" {
+                streamFrameToMMDuet2(base64Frame: base64Data)
+            }
+            return
+        }
+        
         let mediaPayload: [String: Any] = [
             "realtimeInput": [
                 "mediaChunks": [
@@ -256,8 +278,78 @@ public final class GeminiLiveService: NSObject {
         }
     }
     
+    public func disconnect() {
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        webSocketTask = nil
+        OpenClawToolRouter.shared.disconnectEventClient()
+        print("[GeminiLiveService] Manually disconnected from Gemini Live and OpenClaw.")
+    }
+    
     private func handleDisconnect() {
         // Implement auto-reconnection with exponential backoff if required.
         // It will automatically use the stored lastResumptionToken on the next setup.
+        OpenClawToolRouter.shared.disconnectEventClient()
+    }
+    
+    private func streamFrameToMMDuet2(base64Frame: String) {
+        let gatewayIP = OpenClawToolRouter.shared.gatewayIP
+        let urlString = "http://\(gatewayIP):8000/frame"
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "image": base64Frame,
+            "prompt": "" // Default prompt on iOS
+        ]
+        
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        request.httpBody = jsonData
+        
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("[GeminiLiveService] MMDuet2 Frame stream error: \(error.localizedDescription)")
+                return
+            }
+            
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let kvCache = json["kv_cache_size"] as? Int {
+                self.mmduet2FrameCount += 1
+                self.mmduet2KVCacheSize = kvCache
+                print("[GeminiLiveService] MMDuet2 Frame \(self.mmduet2FrameCount) success. KV Cache: \(kvCache)")
+                
+                if kvCache >= 20000 {
+                    print("[GeminiLiveService] MMDuet2 KV Cache threshold exceeded. Resetting cache...")
+                    self.resetMMDuet2Server()
+                }
+            }
+        }
+        task.resume()
+    }
+    
+    public func resetMMDuet2Server() {
+        let gatewayIP = OpenClawToolRouter.shared.gatewayIP
+        let urlString = "http://\(gatewayIP):8000/reset"
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "{}".data(using: .utf8)
+        
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("[GeminiLiveService] MMDuet2 Reset error: \(error.localizedDescription)")
+                return
+            }
+            print("[GeminiLiveService] MMDuet2 Server reset successful.")
+            self.mmduet2KVCacheSize = 0
+        }
+        task.resume()
     }
 }

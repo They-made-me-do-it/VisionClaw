@@ -115,6 +115,7 @@ public class GeminiLiveService private constructor() {
         val functionDecl = JSONObject()
         functionDecl.put("name", "execute")
         functionDecl.put("description", "Execute local action via OpenClaw Gateway on LAN")
+        functionDecl.put("behavior", "NON_BLOCKING")
 
         val parameters = JSONObject()
         parameters.put("type", "OBJECT")
@@ -271,6 +272,7 @@ public class GeminiLiveService private constructor() {
         val responseContainer = JSONObject()
         responseContainer.put("id", callId)
         responseContainer.put("name", "execute")
+        responseContainer.put("scheduling", "INTERRUPT")
 
         if (errorMsg != null) {
             val errObj = JSONObject()
