@@ -109,7 +109,8 @@ if ($gatewayIsRunningHealthy) {
     Log-Message "Starting background gateway process..."
     "" | Out-File -FilePath $gatewayLog -Encoding utf8
     
-    $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+    $launcherScript = Join-Path $HOME ".openclaw-autoclaw\scripts\Start-OpenClawGateway.ps1"
+    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
     Start-Sleep -Seconds 3
 
     # If it failed immediately, check for config/plugin validation error
@@ -144,7 +145,7 @@ if ($gatewayIsRunningHealthy) {
             
             # Retry startup
             Log-Message "Retrying gateway startup after auto-repair..."
-            $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
             Start-Sleep -Seconds 3
         }
     }
@@ -234,7 +235,8 @@ try {
             # Run pre-start config repair
             & (Join-Path $PSScriptRoot "CONFIGURE_OPENCLAW.ps1")
 
-            $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            $launcherScript = Join-Path $HOME ".openclaw-autoclaw\scripts\Start-OpenClawGateway.ps1"
+            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
             Start-Sleep -Seconds 3
 
             # Check if it failed immediately
@@ -264,7 +266,7 @@ try {
                             } catch {}
                         }
                     }
-                    $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+                    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
                     Start-Sleep -Seconds 3
                 }
             }

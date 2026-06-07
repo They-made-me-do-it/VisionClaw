@@ -21,85 +21,90 @@ if (Test-Path $envFile) {
     }
 }
 
-function Repair-OpenClawConfigFile {
-    param(
-        [string]$ConfigFile
-    )
-    $ConfigDir = Split-Path $ConfigFile
-    if (-not (Test-Path $ConfigDir)) {
-        New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
-    }
-    
-    $parsed = $false
-    $attempts = 0
-    $config = $null
-    
-    while (-not $parsed -and $attempts -lt 3) {
-        $attempts++
-        if (-not (Test-Path $ConfigFile) -or (Get-Item $ConfigFile).Length -eq 0) {
-            "{}" | Out-File -FilePath $ConfigFile -Encoding utf8 -Force
+$CommonPath = Join-Path $HOME ".openclaw-autoclaw\scripts\OpenClaw-Autoclaw-Common.ps1"
+if (Test-Path $CommonPath) {
+    . $CommonPath
+} else {
+    function Repair-OpenClawConfigFile {
+        param(
+            [string]$ConfigFile
+        )
+        $ConfigDir = Split-Path $ConfigFile
+        if (-not (Test-Path $ConfigDir)) {
+            New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
         }
         
-        try {
-            $jsonContent = Get-Content -Raw -Path $ConfigFile
-            $config = $jsonContent | ConvertFrom-Json
-            $parsed = $true
-        } catch {
-            Write-Host "WARNING: Failed to parse JSON config at $ConfigFile. Attempting recovery..." -ForegroundColor Yellow
-            $backups = @(
-                "$ConfigFile.known-good",
-                "$ConfigFile.last-good",
-                "$ConfigFile.bak",
-                "$ConfigFile.bak.1"
-            )
-            $recovered = $false
-            foreach ($backup in $backups) {
-                $backupPath = Join-Path $ConfigDir (Split-Path $backup -Leaf)
-                if (Test-Path $backupPath) {
-                    Write-Host "Restoring configuration from backup: $backupPath" -ForegroundColor Cyan
-                    Copy-Item -Path $backupPath -Destination $ConfigFile -Force
-                    $recovered = $true
-                    break
-                }
-            }
-            if (-not $recovered) {
-                Write-Host "No valid backups found. Initializing new empty configuration." -ForegroundColor Red
+        $parsed = $false
+        $attempts = 0
+        $config = $null
+        
+        while (-not $parsed -and $attempts -lt 3) {
+            $attempts++
+            if (-not (Test-Path $ConfigFile) -or (Get-Item $ConfigFile).Length -eq 0) {
                 "{}" | Out-File -FilePath $ConfigFile -Encoding utf8 -Force
             }
-        }
-    }
-    
-    if (-not $parsed) {
-        Write-Host "CRITICAL: Configuration file $ConfigFile could not be repaired." -ForegroundColor Red
-        return $null
-    }
-
-    # Inspect plugins and ensure they exist and have a manifest if enabled
-    $changed = $false
-    
-    if ($config -and $config.PSObject.Properties['plugins'] -and $config.plugins.PSObject.Properties['entries']) {
-        foreach ($pluginName in $config.plugins.entries.PSObject.Properties.Name) {
-            $pluginEntry = $config.plugins.entries.$pluginName
-            if ($pluginEntry -and $pluginEntry.PSObject.Properties['enabled'] -and $pluginEntry.enabled -eq $true) {
-                # Check if the folder exists and contains manifest.json
-                $pluginFolder = Join-Path $ConfigDir "plugins\$pluginName"
-                $manifestPath = Join-Path $pluginFolder "manifest.json"
-                if (-not (Test-Path $manifestPath)) {
-                    Write-Host "WARNING: Stale plugin '$pluginName' enabled but manifest/directory missing at $manifestPath. Disabling plugin." -ForegroundColor Yellow
-                    $pluginEntry.enabled = $false
-                    $changed = $true
+            
+            try {
+                $jsonContent = Get-Content -Raw -Path $ConfigFile
+                $config = $jsonContent | ConvertFrom-Json
+                $parsed = $true
+            } catch {
+                Write-Host "WARNING: Failed to parse JSON config at $ConfigFile. Attempting recovery..." -ForegroundColor Yellow
+                $backups = @(
+                    "$ConfigFile.known-good",
+                    "$ConfigFile.last-good",
+                    "$ConfigFile.bak",
+                    "$ConfigFile.bak.1"
+                )
+                $recovered = $false
+                foreach ($backup in $backups) {
+                    $backupPath = Join-Path $ConfigDir (Split-Path $backup -Leaf)
+                    if (Test-Path $backupPath) {
+                        Write-Host "Restoring configuration from backup: $backupPath" -ForegroundColor Cyan
+                        Copy-Item -Path $backupPath -Destination $ConfigFile -Force
+                        $recovered = $true
+                        break
+                    }
+                }
+                if (-not $recovered) {
+                    Write-Host "No valid backups found. Initializing new empty configuration." -ForegroundColor Red
+                    "{}" | Out-File -FilePath $ConfigFile -Encoding utf8 -Force
                 }
             }
         }
-    }
+        
+        if (-not $parsed) {
+            Write-Host "CRITICAL: Configuration file $ConfigFile could not be repaired." -ForegroundColor Red
+            return $null
+        }
 
-    if ($changed) {
-        Write-Host "Writing auto-repaired configuration to $ConfigFile..." -ForegroundColor Green
-        $newJson = $config | ConvertTo-Json -Depth 20
-        $newJson | Out-File -FilePath $ConfigFile -Encoding utf8 -Force
-    }
+        # Inspect plugins and ensure they exist and have a manifest if enabled
+        $changed = $false
+        
+        if ($config -and $config.PSObject.Properties['plugins'] -and $config.plugins.PSObject.Properties['entries']) {
+            foreach ($pluginName in $config.plugins.entries.PSObject.Properties.Name) {
+                $pluginEntry = $config.plugins.entries.$pluginName
+                if ($pluginEntry -and $pluginEntry.PSObject.Properties['enabled'] -and $pluginEntry.enabled -eq $true) {
+                    # Check if the folder exists and contains manifest.json
+                    $pluginFolder = Join-Path $ConfigDir "plugins\$pluginName"
+                    $manifestPath = Join-Path $pluginFolder "manifest.json"
+                    if (-not (Test-Path $manifestPath)) {
+                        Write-Host "WARNING: Stale plugin '$pluginName' enabled but manifest/directory missing at $manifestPath. Disabling plugin." -ForegroundColor Yellow
+                        $pluginEntry.enabled = $false
+                        $changed = $true
+                    }
+                }
+            }
+        }
 
-    return $config
+        if ($changed) {
+            Write-Host "Writing auto-repaired configuration to $ConfigFile..." -ForegroundColor Green
+            $newJson = $config | ConvertTo-Json -Depth 20
+            $newJson | Out-File -FilePath $ConfigFile -Encoding utf8 -Force
+        }
+
+        return $config
+    }
 }
 
 $ConfigPaths = @(
