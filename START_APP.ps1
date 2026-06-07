@@ -25,6 +25,13 @@ function Log-Error($msg) {
     $timestamped | Out-File -FilePath $LogPath -Append -Encoding utf8
 }
 
+function Log-Warning($msg) {
+    $timestamped = "$(Get-Date -Format 'o') [WARN] $msg"
+    Write-Host $timestamped -ForegroundColor Yellow
+    $timestamped | Out-File -FilePath $LogPath -Append -Encoding utf8
+}
+
+
 # 1. Load .env file at workspace root
 $envFile = Join-Path $PSScriptRoot ".env"
 if (Test-Path $envFile) {
@@ -50,26 +57,98 @@ if (Test-Path $envFile) {
 Log-Message "Auto-configuring OpenClaw settings..."
 & (Join-Path $PSScriptRoot "CONFIGURE_OPENCLAW.ps1")
 
-# 3. Check and start OpenClaw Gateway Daemon
-$gatewayProcess = $null
+# 3. Port Conflict Check & Resolution for OpenClaw Gateway (18789)
+Log-Message "Checking for port conflicts on gateway port 18789..."
 $gatewayToken = $env:OPENCLAW_GATEWAY_TOKEN
 if (-not $gatewayToken) {
     $gatewayToken = "bcc2b8fb978d0aaab930713064dff7ac9c801c2e7e6a5f16"
 }
 
-Log-Message "Checking OpenClaw Gateway service status..."
+$gatewayLog = Join-Path $HandoffDir "OPENCLAW_GATEWAY.log"
+
+# Check health before deciding to restart or clean port
 $healthCheck = & openclaw --profile autoclaw gateway health 2>&1
-if ($LASTEXITCODE -eq 0 -and $healthCheck -match "OK") {
+$gatewayIsRunningHealthy = ($LASTEXITCODE -eq 0 -and $healthCheck -match "OK")
+
+if (-not $gatewayIsRunningHealthy) {
+    # Check if someone is listening on 18789
+    $netstatGW = netstat -ano | Select-String ":18789 "
+    if ($netstatGW) {
+        Log-Warning "Port 18789 is occupied but health check failed. Terminating occupying process..."
+        foreach ($line in $netstatGW) {
+            if ($line.ToString() -match '\s+LISTENING\s+(\d+)') {
+                $pidToKill = $Matches[1]
+                Log-Message "Killing process $pidToKill holding port 18789..."
+                Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Start-Sleep -Seconds 1
+    }
+}
+
+# 4. Port Conflict Check & Resolution for Dashboard Server (18790)
+Log-Message "Checking for port conflicts on dashboard port $ServerPort..."
+$netstatNode = netstat -ano | Select-String ":$ServerPort "
+if ($netstatNode) {
+    Log-Warning "Port $ServerPort is occupied. Terminating occupying process..."
+    foreach ($line in $netstatNode) {
+        if ($line.ToString() -match '\s+LISTENING\s+(\d+)') {
+            $pidToKill = $Matches[1]
+            Log-Message "Killing process $pidToKill holding port $ServerPort..."
+            Stop-Process -Id $pidToKill -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Seconds 1
+}
+
+# 5. Start OpenClaw Gateway if not already running healthy
+$gatewayProcess = $null
+if ($gatewayIsRunningHealthy) {
     Log-Message "OpenClaw Gateway is already running and healthy. Skipping manual start."
 } else {
-    Log-Message "OpenClaw Gateway is not running or unhealthy. Starting background gateway process..."
-    $gatewayLog = Join-Path $HandoffDir "OPENCLAW_GATEWAY.log"
+    Log-Message "Starting background gateway process..."
     "" | Out-File -FilePath $gatewayLog -Encoding utf8
     
     $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
-    
-    # Wait for gateway to bind
     Start-Sleep -Seconds 3
+
+    # If it failed immediately, check for config/plugin validation error
+    if ($gatewayProcess.HasExited) {
+        Log-Warning "Gateway failed to start on first attempt. Checking log for validation errors..."
+        $logContent = Get-Content -Raw -Path $gatewayLog
+        $officialLog = Join-Path $HOME ".openclaw-autoclaw\logs\gateway.log"
+        if (Test-Path $officialLog) {
+            $logContent += "`r`n" + (Get-Content -Raw -Path $officialLog -Tail 50)
+        }
+
+        if ($logContent -match 'validation failed: config\.plugins: Entry "([^"]+)" points to a plugin folder') {
+            $offendingPlugin = $Matches[1]
+            Log-Error "Detected stale/invalid plugin: $offendingPlugin. Automatically disabling and retrying..."
+            
+            $targetFiles = @(
+                (Join-Path $HOME ".openclaw-autoclaw\openclaw.json"),
+                (Join-Path $HOME ".openclaw-autoclaw\openclaw.runtime.json")
+            )
+            foreach ($file in $targetFiles) {
+                if (Test-Path $file) {
+                    try {
+                        $cfg = Get-Content -Raw -Path $file | ConvertFrom-Json
+                        if ($cfg.PSObject.Properties['plugins'] -and $cfg.plugins.PSObject.Properties['entries'] -and $cfg.plugins.entries.PSObject.Properties[$offendingPlugin]) {
+                            $cfg.plugins.entries.$offendingPlugin.enabled = $false
+                            $cfg | ConvertTo-Json -Depth 20 | Out-File -FilePath $file -Encoding utf8 -Force
+                            Log-Message "Disabled plugin '$offendingPlugin' in $file"
+                        }
+                    } catch {}
+                }
+            }
+            
+            # Retry startup
+            Log-Message "Retrying gateway startup after auto-repair..."
+            $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            Start-Sleep -Seconds 3
+        }
+    }
+
     if ($gatewayProcess.HasExited) {
         Log-Error "Failed to start OpenClaw Gateway. See logs at: $gatewayLog"
         exit 1
@@ -77,15 +156,13 @@ if ($LASTEXITCODE -eq 0 -and $healthCheck -match "OK") {
     Log-Message "OpenClaw Gateway successfully started (PID: $($gatewayProcess.Id)). Log: $gatewayLog"
 }
 
-# 4. Start Dashboard Static File Server (Node.js)
+# 6. Start Dashboard Server (Node.js)
 Log-Message "Starting backend Node.js server (server.js)..."
 $nodeProcess = Start-Process -FilePath "node" -ArgumentList "server.js" -NoNewWindow -PassThru
-
-# Give Node a moment to bind to the port
 Start-Sleep -Seconds 2
 
 if ($nodeProcess.HasExited) {
-    Log-Error "Node.js process failed to start. Check if port $ServerPort is already in use."
+    Log-Error "Node.js process failed to start. Port $ServerPort may be blocked."
     exit 1
 }
 
@@ -94,14 +171,112 @@ Log-Message "Opening Dashboard in default web browser..."
 Start-Process "http://localhost:$ServerPort"
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor Cyan
-Write-Host "VisionClaw Edge Gateway is active!" -ForegroundColor Cyan
+Write-Host "VisionClaw Edge Gateway & Dashboard Active!" -ForegroundColor Cyan
+Write-Host "Process Supervisor is monitoring services." -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to terminate services gracefully." -ForegroundColor Cyan
 Write-Host "--------------------------------------------------`n" -ForegroundColor Cyan
 
+# 7. Supervisor Health Monitoring & Auto-Restart Watch Loop
 try {
-    # Enter wait loop while monitoring process life
-    while (-not $nodeProcess.HasExited -and ($null -eq $gatewayProcess -or -not $gatewayProcess.HasExited)) {
-        Start-Sleep -Seconds 1
+    while ($true) {
+        # A. Monitor Node.js Dashboard Server
+        $nodeHealthy = $false
+        try {
+            $res = Invoke-RestMethod -Uri "http://localhost:$ServerPort/api/config" -Method Get -TimeoutSec 2
+            if ($res -and $res.PSObject.Properties.Name -contains 'geminiApiKey') {
+                $nodeHealthy = $true
+            }
+        } catch {}
+
+        if (-not $nodeHealthy) {
+            Log-Warning "Node.js Server is unresponsive or stopped. Attempting recovery..."
+            if ($nodeProcess -and -not $nodeProcess.HasExited) {
+                Stop-Process -Id $nodeProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            # Clean port just in case
+            $netstatNode = netstat -ano | Select-String ":$ServerPort "
+            if ($netstatNode) {
+                foreach ($line in $netstatNode) {
+                    if ($line.ToString() -match '\s+LISTENING\s+(\d+)') {
+                        Stop-Process -Id $Matches[1] -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                Start-Sleep -Seconds 1
+            }
+            $nodeProcess = Start-Process -FilePath "node" -ArgumentList "server.js" -NoNewWindow -PassThru
+            Start-Sleep -Seconds 2
+            Log-Message "Node.js Server restarted."
+        }
+
+        # B. Monitor OpenClaw Gateway Health
+        $gatewayHealthy = $false
+        $healthCheck = & openclaw --profile autoclaw gateway health 2>&1
+        if ($LASTEXITCODE -eq 0 -and $healthCheck -match "OK") {
+            $gatewayHealthy = $true
+        }
+
+        if (-not $gatewayHealthy) {
+            Log-Warning "OpenClaw Gateway is unresponsive or stopped. Attempting recovery..."
+            if ($gatewayProcess -and -not $gatewayProcess.HasExited) {
+                Stop-Process -Id $gatewayProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            # Clean port
+            $netstatGW = netstat -ano | Select-String ":18789 "
+            if ($netstatGW) {
+                foreach ($line in $netstatGW) {
+                    if ($line.ToString() -match '\s+LISTENING\s+(\d+)') {
+                        Stop-Process -Id $Matches[1] -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                Start-Sleep -Seconds 1
+            }
+
+            # Run pre-start config repair
+            & (Join-Path $PSScriptRoot "CONFIGURE_OPENCLAW.ps1")
+
+            $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            Start-Sleep -Seconds 3
+
+            # Check if it failed immediately
+            if ($gatewayProcess.HasExited) {
+                $logContent = Get-Content -Raw -Path $gatewayLog
+                $officialLog = Join-Path $HOME ".openclaw-autoclaw\logs\gateway.log"
+                if (Test-Path $officialLog) {
+                    $logContent += "`r`n" + (Get-Content -Raw -Path $officialLog -Tail 50)
+                }
+
+                if ($logContent -match 'validation failed: config\.plugins: Entry "([^"]+)" points to a plugin folder') {
+                    $offendingPlugin = $Matches[1]
+                    Log-Error "Detected stale/invalid plugin: $offendingPlugin. Automatically disabling and retrying..."
+                    $targetFiles = @(
+                        (Join-Path $HOME ".openclaw-autoclaw\openclaw.json"),
+                        (Join-Path $HOME ".openclaw-autoclaw\openclaw.runtime.json")
+                    )
+                    foreach ($file in $targetFiles) {
+                        if (Test-Path $file) {
+                            try {
+                                $cfg = Get-Content -Raw -Path $file | ConvertFrom-Json
+                                if ($cfg.PSObject.Properties['plugins'] -and $cfg.plugins.PSObject.Properties['entries'] -and $cfg.plugins.entries.PSObject.Properties[$offendingPlugin]) {
+                                    $cfg.plugins.entries.$offendingPlugin.enabled = $false
+                                    $cfg | ConvertTo-Json -Depth 20 | Out-File -FilePath $file -Encoding utf8 -Force
+                                    Log-Message "Disabled plugin '$offendingPlugin' in $file"
+                                }
+                            } catch {}
+                        }
+                    }
+                    $gatewayProcess = Start-Process -FilePath "openclaw.cmd" -ArgumentList "--profile autoclaw gateway run --force --port 18789 --token $gatewayToken" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+                    Start-Sleep -Seconds 3
+                }
+            }
+
+            if ($gatewayProcess.HasExited) {
+                Log-Error "Failed to restart OpenClaw Gateway automatically."
+            } else {
+                Log-Message "OpenClaw Gateway restarted successfully."
+            }
+        }
+
+        Start-Sleep -Seconds 5
     }
 }
 catch [System.Management.Automation.PipelineStoppedException] {
@@ -111,6 +286,7 @@ catch {
     Log-Error $_.Exception.Message
 }
 finally {
+    Log-Message "Shutting down processes gracefully on exit..."
     if ($nodeProcess -and -not $nodeProcess.HasExited) {
         Log-Message "Terminating background Node.js server..."
         Stop-Process -Id $nodeProcess.Id -Force
@@ -121,4 +297,5 @@ finally {
     }
     Log-Message "Shutdown clean and complete."
 }
+
 
