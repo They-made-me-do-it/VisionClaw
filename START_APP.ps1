@@ -1,7 +1,7 @@
 # START_APP.ps1
 # Startup script for VisionClaw OpenClaw Gateway and mobile client configurations
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Continue"
 $HandoffDir = Join-Path $PSScriptRoot "_handoff"
 $LogPath = Join-Path $HandoffDir "LAST_RUN.log"
 $ServerPort = 18790
@@ -65,6 +65,7 @@ if (-not $gatewayToken) {
 }
 
 $gatewayLog = Join-Path $HandoffDir "OPENCLAW_GATEWAY.log"
+$gatewayErr = Join-Path $HandoffDir "OPENCLAW_GATEWAY.err"
 
 # Check health before deciding to restart or clean port
 $healthCheck = & openclaw --profile autoclaw gateway health 2>&1
@@ -110,7 +111,7 @@ if ($gatewayIsRunningHealthy) {
     "" | Out-File -FilePath $gatewayLog -Encoding utf8
     
     $launcherScript = Join-Path $HOME ".openclaw-autoclaw\scripts\Start-OpenClawGateway.ps1"
-    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayErr -NoNewWindow -PassThru
     Start-Sleep -Seconds 3
 
     # If it failed immediately, check for config/plugin validation error
@@ -145,7 +146,7 @@ if ($gatewayIsRunningHealthy) {
             
             # Retry startup
             Log-Message "Retrying gateway startup after auto-repair..."
-            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayErr -NoNewWindow -PassThru
             Start-Sleep -Seconds 3
         }
     }
@@ -236,7 +237,7 @@ try {
             & (Join-Path $PSScriptRoot "CONFIGURE_OPENCLAW.ps1")
 
             $launcherScript = Join-Path $HOME ".openclaw-autoclaw\scripts\Start-OpenClawGateway.ps1"
-            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+            $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayErr -NoNewWindow -PassThru
             Start-Sleep -Seconds 3
 
             # Check if it failed immediately
@@ -266,7 +267,7 @@ try {
                             } catch {}
                         }
                     }
-                    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayLog -NoNewWindow -PassThru
+                    $gatewayProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File ""$launcherScript"" -Port 18789 -Token $gatewayToken -Force" -RedirectStandardOutput $gatewayLog -RedirectStandardError $gatewayErr -NoNewWindow -PassThru
                     Start-Sleep -Seconds 3
                 }
             }

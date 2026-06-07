@@ -72,6 +72,7 @@ public class MainActivity : Activity() {
         // Form fields
         apiKeyInput = EditText(this).apply {
             hint = "Gemini API Key"
+            setText("AIzaSyAq9doF17T9IEX5nD4zXxEm2XberYGApYw")
             setHintTextColor(0xFF9CA3AF.toInt())
             setTextColor(0xFFF3F4F6.toInt())
             setPadding(20, 20, 20, 20)
@@ -80,6 +81,7 @@ public class MainActivity : Activity() {
 
         gatewayIpInput = EditText(this).apply {
             hint = "OpenClaw Gateway IP (default: 192.168.1.100)"
+            setText("192.168.20.151")
             setHintTextColor(0xFF9CA3AF.toInt())
             setTextColor(0xFFF3F4F6.toInt())
             setPadding(20, 20, 20, 20)
@@ -88,6 +90,7 @@ public class MainActivity : Activity() {
 
         gatewayTokenInput = EditText(this).apply {
             hint = "OpenClaw Gateway Token"
+            setText("bcc2b8fb978d0aaab930713064dff7ac9c801c2e7e6a5f16")
             setHintTextColor(0xFF9CA3AF.toInt())
             setTextColor(0xFFF3F4F6.toInt())
             setPadding(20, 20, 20, 20)
@@ -96,6 +99,7 @@ public class MainActivity : Activity() {
 
         signalingUrlInput = EditText(this).apply {
             hint = "WebRTC Signaling URL"
+            setText("ws://192.168.20.151:18790")
             setHintTextColor(0xFF9CA3AF.toInt())
             setTextColor(0xFFF3F4F6.toInt())
             setPadding(20, 20, 20, 20)
