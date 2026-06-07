@@ -6,12 +6,12 @@
                        "event":  "Integration_Test_Start"
                    },
                    {
-                       "time":  "41ms",
+                       "time":  "34ms",
                        "status":  "SUCCESS",
                        "event":  "API_Config_Check"
                    },
                    {
-                       "time":  "104ms",
+                       "time":  "71ms",
                        "status":  "SUCCESS",
                        "event":  "Tool_Invoke_Ping"
                    }
