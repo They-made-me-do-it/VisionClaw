@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ws.send(JSON.stringify({
                     realtimeInput: {
                         mediaChunks: [{
-                            mimeType: "audio/pcm",
+                            mimeType: "audio/pcm;rate=16000",
                             data: base64Audio
                         }]
                     }

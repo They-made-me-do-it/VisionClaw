@@ -292,7 +292,7 @@ public class MainActivity : Activity() {
         am.startRecording { pcmChunk ->
             if (isGeminiActive) {
                 val base64Audio = android.util.Base64.encodeToString(pcmChunk, android.util.Base64.NO_WRAP)
-                GeminiLiveService.shared.sendMediaChunk("audio/pcm", base64Audio)
+                GeminiLiveService.shared.sendMediaChunk("audio/pcm;rate=16000", base64Audio)
             }
         }
         GeminiLiveService.shared.audioManager = am
