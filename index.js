@@ -435,7 +435,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const setupPayload = {
             setup: {
-                model: "models/gemini-2.5-flash-native-audio-latest",
+                model: "models/gemini-3.1-flash-live-preview",
                 generationConfig: {
                     responseModalities: ["AUDIO"],
                     speechConfig: {
@@ -517,6 +517,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 json.serverContent.parts.forEach(part => {
                     if (part.inlineData && part.inlineData.mimeType.includes("audio/pcm")) {
                         playPCM(part.inlineData.data);
+                    }
+                    if (part.text) {
+                        appendTerminalLog(wssLogsEl, `Transcript: ${part.text}`, "server");
                     }
                 });
             }

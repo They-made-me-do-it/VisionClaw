@@ -9,3 +9,5 @@ node_modules/
 artifacts/
 assets/capture_*.jpg
 _handoff/*.log
+local.properties
+**/local.properties
