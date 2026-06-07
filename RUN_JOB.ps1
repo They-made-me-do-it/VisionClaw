@@ -48,11 +48,11 @@ $timelineEvents += @{ event = "Integration_Test_Start"; time = "$($startTime.Ela
 try {
     Write-Host "Testing /api/config endpoint..."
     $configRes = Invoke-RestMethod -Uri "http://localhost:18790/api/config" -Method Get -TimeoutSec 5
-    if ($configRes.geminiApiKey -or $configRes.gatewayToken -or $configRes) {
-        $timelineEvents += @{ event = "API_Config_Check"; time = "$($startTime.ElapsedMilliseconds)ms"; status = "SUCCESS" }
-    } else {
-        throw "Config response missing expected structure"
+    if (-not $configRes) { throw "Empty /api/config response" }
+    if (-not ($configRes.PSObject.Properties.Name -contains 'geminiApiKey') -or -not ($configRes.PSObject.Properties.Name -contains 'gatewayToken')) {
+        throw "Config response missing expected properties"
     }
+    $timelineEvents += @{ event = "API_Config_Check"; time = "$($startTime.ElapsedMilliseconds)ms"; status = "SUCCESS" }
 } catch {
     $failures++
     Log-Error "Failed to reach /api/config: $_"

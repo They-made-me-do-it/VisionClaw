@@ -5,8 +5,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const https = require('https');
 
 const PORT = 18790;
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 // Load and parse d:\Meta\.env configuration file
 const envPath = path.join(__dirname, '.env');
@@ -14,21 +17,28 @@ let envConfig = {};
 if (fs.existsSync(envPath)) {
     try {
         const envContent = fs.readFileSync(envPath, 'utf-8');
-        envContent.split(/\r?\n/).forEach(line => {
+        let malformed = 0;
+        envContent.split(/\r?\n/).forEach((line, idx) => {
             const trimmed = line.trim();
             if (!trimmed || trimmed.startsWith('#')) return;
-            const match = trimmed.match(/^([\w.-]+)\s*=\s*(.*)?\s*$/);
-            if (match) {
-                let key = match[1];
-                let value = match[2] ? match[2].trim() : '';
-                // Strip quotes
-                if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                    value = value.substring(1, value.length - 1);
-                }
-                envConfig[key] = value;
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx <= 0) {
+                malformed++;
+                return;
             }
+            const key = trimmed.slice(0, eqIdx).trim();
+            let value = trimmed.slice(eqIdx + 1).trim();
+            // Strip a single matching pair of surrounding quotes (double or single)
+            if (value.length >= 2) {
+                const first = value.charAt(0);
+                const last = value.charAt(value.length - 1);
+                if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+                    value = value.slice(1, -1);
+                }
+            }
+            envConfig[key] = value;
         });
-        console.log(`[Config] Successfully loaded config variables from .env`);
+        console.log(`[Config] Successfully loaded config variables from .env${malformed ? ` (skipped ${malformed} malformed line${malformed === 1 ? '' : 's'})` : ''}`);
     } catch (e) {
         console.error(`[Config Error] Failed to read .env: ${e.message}`);
     }
@@ -62,7 +72,10 @@ const server = http.createServer((req, res) => {
 
     // config API endpoint to serve Gemini API Key and OpenClaw Gateway Token to clients on LAN
     if (req.method === 'GET' && req.url === '/api/config') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store'
+        });
         res.end(JSON.stringify({
             geminiApiKey: envConfig['GEMINI_API_KEY'] || '',
             gatewayToken: envConfig['OPENCLAW_GATEWAY_TOKEN'] || ''
@@ -138,16 +151,39 @@ const server = http.createServer((req, res) => {
 
     // 2. Live API Route: OpenClaw workspace upload (Writes actual binary JPEG buffer to disk)
     if (req.method === 'POST' && req.url === '/workspace/upload') {
-        let body = [];
+        const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+        if (Number.isNaN(contentLength) || contentLength <= 0) {
+            res.writeHead(411, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ERROR', message: 'Content-Length header required.' }));
+            return;
+        }
+        if (contentLength > MAX_UPLOAD_BYTES) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ERROR', message: `Upload exceeds ${MAX_UPLOAD_BYTES} byte limit.` }));
+            return;
+        }
+
+        let received = 0;
+        let aborted = false;
+        const chunks = [];
         req.on('data', chunk => {
-            body.push(chunk);
+            if (aborted) return;
+            received += chunk.length;
+            if (received > MAX_UPLOAD_BYTES) {
+                aborted = true;
+                res.writeHead(413, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'ERROR', message: `Upload exceeds ${MAX_UPLOAD_BYTES} byte limit.` }));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
         }).on('end', () => {
-            const buffer = Buffer.concat(body);
+            if (aborted) return;
+            const buffer = Buffer.concat(chunks);
             const filename = `capture_${Date.now()}.jpg`;
             const assetsDir = path.join(__dirname, 'assets');
             const filePath = path.join(assetsDir, filename);
 
-            const os = require('os');
             const workspaceDir = path.join(os.homedir(), '.openclaw', 'workspace');
 
             // Ensure assets folder exists on disk
@@ -158,32 +194,37 @@ const server = http.createServer((req, res) => {
                     return;
                 }
 
-                fs.mkdir(workspaceDir, { recursive: true }, (wsDirErr) => {
-                    // Write to local assets first for the UI gallery
-                    fs.writeFile(filePath, buffer, (writeErr) => {
-                        if (writeErr) {
-                            res.writeHead(500, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({ status: 'ERROR', message: writeErr.message }));
-                        } else {
-                            console.log(`[OpenClaw Workspace] Image snapshot saved to: ${filePath}`);
+                // Write to local assets first for the UI gallery
+                fs.writeFile(filePath, buffer, (writeErr) => {
+                    if (writeErr) {
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ status: 'ERROR', message: writeErr.message }));
+                        return;
+                    }
+                    console.log(`[OpenClaw Workspace] Image snapshot saved to: ${filePath}`);
 
-                            // Also write copy to home OpenClaw workspace
-                            const wsFilePath = path.join(workspaceDir, filename);
-                            fs.writeFile(wsFilePath, buffer, (wsWriteErr) => {
-                                if (wsWriteErr) {
-                                    console.log(`[OpenClaw Workspace Warning] Failed to write copy to ${wsFilePath}: ${wsWriteErr.message}`);
-                                } else {
-                                    console.log(`[OpenClaw Workspace] Copied image snapshot to OpenClaw workspace: ${wsFilePath}`);
-                                }
-                            });
-
-                            res.writeHead(200, { 'Content-Type': 'application/json' });
-                            res.end(JSON.stringify({
-                                status: 'SUCCESS',
-                                filename: filename
-                            }));
+                    // Fire-and-forget copy to the home OpenClaw workspace. This is best-effort
+                    // and intentionally does not gate the HTTP response on completion.
+                    fs.mkdir(workspaceDir, { recursive: true }, (wsDirErr) => {
+                        if (wsDirErr) {
+                            console.log(`[OpenClaw Workspace Warning] Could not ensure ${workspaceDir}: ${wsDirErr.message}`);
+                            return;
                         }
+                        const wsFilePath = path.join(workspaceDir, filename);
+                        fs.writeFile(wsFilePath, buffer, (wsWriteErr) => {
+                            if (wsWriteErr) {
+                                console.log(`[OpenClaw Workspace Warning] Failed to write copy to ${wsFilePath}: ${wsWriteErr.message}`);
+                            } else {
+                                console.log(`[OpenClaw Workspace] Copied image snapshot to OpenClaw workspace: ${wsFilePath}`);
+                            }
+                        });
                     });
+
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        status: 'SUCCESS',
+                        filename: filename
+                    }));
                 });
             });
         });
@@ -217,20 +258,24 @@ const server = http.createServer((req, res) => {
                 const payload = JSON.parse(body);
                 const query = encodeURIComponent(`site:amazon.com ${payload.query || ''}`);
                 const apiKey = envConfig['SERPAPI_API_KEY'];
-                
+
                 if (!apiKey) {
                     res.writeHead(500, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ status: 'ERROR', message: 'SerpApi API key missing from .env' }));
                     return;
                 }
- 
-                const url = `https://serpapi.com/search.json?q=${query}&api_key=${apiKey}&engine=google`;
-                
-                const https = require('https');
-                https.get(url, (apiRes) => {
+
+                const url = `https://serpapi.com/search.json?q=${query}&api_key=${encodeURIComponent(apiKey)}&engine=google`;
+
+                const upstreamReq = https.get(url, (apiRes) => {
                     let data = '';
                     apiRes.on('data', chunk => { data += chunk; });
                     apiRes.on('end', () => {
+                        if (apiRes.statusCode >= 400) {
+                            res.writeHead(502, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ status: 'ERROR', message: `SerpApi upstream returned HTTP ${apiRes.statusCode}` }));
+                            return;
+                        }
                         try {
                             const json = JSON.parse(data);
                             if (json.error) {
@@ -264,11 +309,15 @@ const server = http.createServer((req, res) => {
                             res.end(JSON.stringify({ status: 'ERROR', message: 'Failed to parse search response' }));
                         }
                     });
-                }).on('error', (err) => {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                });
+                upstreamReq.setTimeout(10000, () => {
+                    upstreamReq.destroy(new Error('SerpApi request timed out after 10000ms'));
+                });
+                upstreamReq.on('error', (err) => {
+                    res.writeHead(502, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ status: 'ERROR', message: err.message }));
                 });
- 
+
             } catch (err) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ status: 'ERROR', message: 'Invalid payload' }));
@@ -278,12 +327,15 @@ const server = http.createServer((req, res) => {
     }
 
     // 5. Static Files Server
-    let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : req.url);
+    const requestedPath = req.url === '/' ? '/index.html' : req.url.split('?')[0].split('#')[0];
+    const decodedPath = decodeURIComponent(requestedPath);
+    const filePath = path.normalize(path.join(__dirname, decodedPath));
     const extname = String(path.extname(filePath)).toLowerCase();
     const contentType = MIME_TYPES[extname] || 'application/octet-stream';
 
-    if (!filePath.startsWith(__dirname)) {
-        res.writeHead(403);
+    const root = path.resolve(__dirname) + path.sep;
+    if (filePath !== path.resolve(__dirname) && !filePath.startsWith(root)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('Forbidden');
         return;
     }

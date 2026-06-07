@@ -330,10 +330,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let userDisconnected = false;
     let reconnectTimeout = null;
 
-    connectWsBtn.addEventListener('click', () => {
+    function connectGeminiLive() {
         const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
-            alert("Please enter a valid Gemini API Key to connect.");
+            appendTerminalLog(wssLogsEl, "Cannot reconnect: API key missing.", "error");
             return;
         }
 
@@ -388,10 +388,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendTerminalLog(wssLogsEl, "WSS closed unexpectedly. Retrying in 5s...", "warning");
                 reconnectTimeout = setTimeout(() => {
                     appendTerminalLog(wssLogsEl, "Reconnecting WebSocket...", "system");
-                    connectWsBtn.click();
+                    connectGeminiLive();
                 }, 5000);
             }
         };
+    }
+
+    connectWsBtn.addEventListener('click', () => {
+        const apiKey = apiKeyInput.value.trim();
+        if (!apiKey) {
+            alert("Please enter a valid Gemini API Key to connect.");
+            return;
+        }
+        connectGeminiLive();
     });
 
     disconnectWsBtn.addEventListener('click', () => {
@@ -917,10 +926,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (config.geminiApiKey) {
             apiKeyInput.value = config.geminiApiKey;
             appendTerminalLog(wssLogsEl, "Automatically populated Gemini API Key from .env. Connecting...", "success");
-            
+
             // Auto connect live session
             setTimeout(() => {
-                connectWsBtn.click();
+                connectGeminiLive();
             }, 100);
         }
     })

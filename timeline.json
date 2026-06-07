@@ -1,17 +1,17 @@
 ﻿{
     "events":  [
                    {
-                       "time":  "1ms",
+                       "time":  "0ms",
                        "status":  "SUCCESS",
                        "event":  "Integration_Test_Start"
                    },
                    {
-                       "time":  "91ms",
+                       "time":  "40ms",
                        "status":  "SUCCESS",
                        "event":  "API_Config_Check"
                    },
                    {
-                       "time":  "1528ms",
+                       "time":  "95ms",
                        "status":  "SUCCESS",
                        "event":  "Tool_Invoke_Ping"
                    }
