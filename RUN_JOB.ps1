@@ -147,6 +147,15 @@ foreach ($file in $requiredFiles) {
 
 # Update Handoff files
 $StatusFile = Join-Path $HandoffDir "PIPELINE_STATUS.json"
+$LastRunLog = Join-Path $HandoffDir "LAST_RUN.log"
+$SnapshotPath = Join-Path $HandoffDir "ENV_SNAPSHOT.txt"
+
+# Ensure ENV_SNAPSHOT.txt exists
+if (-not (Test-Path $SnapshotPath)) {
+    Write-Host "ENV_SNAPSHOT.txt not found. Running VERIFY_SYSTEM.ps1 to generate it..." -ForegroundColor Yellow
+    & (Join-Path $WorkspaceRoot "VERIFY_SYSTEM.ps1") | Out-Null
+}
+
 if ($missingFiles.Count -gt 0 -or $failures -gt 0) {
     $statusJson = @{
         status = "FAILED"
@@ -164,6 +173,9 @@ if ($missingFiles.Count -gt 0 -or $failures -gt 0) {
 The pipeline test encountered failures. See ERRORS.log for details.
 "@
     $summaryMd | Out-File -FilePath $RunSummaryPath -Encoding utf8
+    
+    # Write to LAST_RUN.log
+    "$(Get-Date -Format 'o') [ERROR] Pipeline integration test job execution failed." | Out-File -FilePath $LastRunLog -Append -Encoding utf8
     
     Write-Host "Pipeline verification failed. Check _handoff/ERRORS.log" -ForegroundColor Red
     exit 1
@@ -188,6 +200,9 @@ The pipeline test encountered failures. See ERRORS.log for details.
 All required files exist and are verified.
 "@
     $summaryMd | Out-File -FilePath $RunSummaryPath -Encoding utf8
+    
+    # Write to LAST_RUN.log
+    "$(Get-Date -Format 'o') [INFO] Pipeline integration test job execution completed successfully." | Out-File -FilePath $LastRunLog -Append -Encoding utf8
     
     Write-Host "Pipeline live test and verification completed successfully!" -ForegroundColor Green
     exit 0

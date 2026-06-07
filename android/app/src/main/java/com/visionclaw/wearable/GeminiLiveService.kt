@@ -12,6 +12,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import android.util.Base64
 
 public class GeminiLiveService private constructor() {
     companion object {

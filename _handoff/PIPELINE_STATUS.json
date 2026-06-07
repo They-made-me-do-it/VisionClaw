@@ -1,7 +1,7 @@
 ﻿{
-    "status":  "VERIFIED",
-    "last_verified":  "2026-06-06T19:35:30.0852502-05:00",
-    "verification_errors":  [
+    "status":  "SUCCESS",
+    "errors":  [
 
-                            ]
+               ],
+    "last_run":  "2026-06-06T20:07:18.4358333-05:00"
 }
