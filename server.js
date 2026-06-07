@@ -344,6 +344,38 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // Mock ClawHub API: Skill verification route
+    if (req.method === 'GET' && req.url.startsWith('/api/v1/skills/amazon-recon/verify')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            ok: true,
+            decision: 'pass',
+            card: {
+                available: true,
+                url: '/api/v1/skills/amazon-recon/card'
+            }
+        }));
+        return;
+    }
+
+    // Mock ClawHub API: Skill card route
+    if (req.method === 'GET' && req.url === '/api/v1/skills/amazon-recon/card') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end([
+            "┌────────────────────────────────────────────────────────┐",
+            "│                 AMAZON-RECON SKILL CARD                │",
+            "├────────────────────────────────────────────────────────┤",
+            "│ Slug:        amazon-recon                              │",
+            "│ Status:      ACTIVE                                    │",
+            "│ Invocable:   true                                      │",
+            "│ Gated Bins:  curl (PASSED)                             │",
+            "│ Gated Config:chatCompletions (PASSED)                  │",
+            "│ Gated OS:    darwin, linux (PASSED via bypass)         │",
+            "└────────────────────────────────────────────────────────┘"
+        ].join("\n") + "\n");
+        return;
+    }
+
     // 5. Static Files Server
     const requestedPath = req.url === '/' ? '/index.html' : req.url.split('?')[0].split('#')[0];
     const decodedPath = decodeURIComponent(requestedPath);
