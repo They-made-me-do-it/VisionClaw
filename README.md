@@ -167,6 +167,8 @@ To support remote debugging without uploading the entire codebase, VisionClaw ma
 3. **Wearable SDK Life-cycle & Hardware Locks**: If the app is backgrounded without cleanly terminating the DAT device session, the wearable hardware stream slot gets locked. MainActivity integrates lifecycle triggers (`onPause`/`onDestroy`) to execute stop calls proactively.
 4. **SerpApi Upstream Latency**: Outbound Google Search queries via SerpApi can occasionally experience transient connection timeouts. The dashboard gateway proxy handles this with strict 10s upstream request limits and propagates exact HTTP error messages to the client instead of masking them with simulated success or stale values.
 5. **Event Client Nonce Challenges**: The OpenClaw event listener client uses Protocol version 3 and receives challenge nonces from the gateway daemon, requiring immediate handshake responses to authenticate operators.
+6. **Stale Plugin Config Gateway Crash**: If a plugin is uninstalled or its directory deleted but its configuration entry remains enabled in `~/.openclaw-autoclaw/openclaw.runtime.json`, the gateway fails validation on startup and crashes immediately, entering an infinite restart loop. Fix this by running `openclaw --profile autoclaw doctor` and removing/disabling the stale entry from the runtime json.
+
 
 ---
 
