@@ -11,3 +11,5 @@ assets/capture_*.jpg
 _handoff/*.log
 local.properties
 **/local.properties
+android/gradle.properties
+

@@ -36,8 +36,8 @@ public class GeminiLiveService private constructor() {
     private var consecutiveFailures = 0
     private val failureThreshold = 3
     private var circuitTripped = false
-    private var circuitTrippedTime = 0Long
-    private val circuitCooldownMs = 60000Long // 1 minute
+    private var circuitTrippedTime = 0L
+    private val circuitCooldownMs = 60000L // 1 minute
 
     public var audioManager: AudioManager? = null
 
