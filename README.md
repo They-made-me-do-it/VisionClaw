@@ -65,6 +65,14 @@ graph TD
     *   Leverages `gemini-live-2.5-flash-native-audio` with `"behavior": "NON_BLOCKING"` and `"scheduling": "INTERRUPT"` parameters. Enables conversational continuation during long-running tool executions.
 5.  **OpenClaw Authorization**:
     *   Routes intercepted tool calls to the official local OpenClaw gateway (on port `18789`) with secure `Authorization: Bearer <TOKEN>` header validation.
+6.  **mDNS Gateway Auto-Discovery**:
+    *   MainActivity leverages autonomous local network mDNS scans (`OpenClawDiscovery.kt`) to resolve the target OpenClaw gateway's local IP address and port without manual entry.
+7.  **LAN Credentials Auto-Sync**:
+    *   Automatically pulls authorized Gemini API keys and OpenClaw tokens from the gateway's dashboard configuration server over the local area network on port `18790`.
+8.  **Amazon Inventory Recon**:
+    *   Proxies Google Search queries restricting results to `site:amazon.com` through SerpApi to retrieve live product listings, prices, and links dynamically to bypass traditional API constraints.
+9.  **MMDuet2 Alternative Local Backend**:
+    *   Provides fallback support for local edge models (such as `MMDuet2` on port `8000`) with automatic KV cache lifecycle resets (tripping at 20,000 tokens) to prevent system memory overflows.
 
 ---
 
@@ -135,3 +143,21 @@ To support remote debugging without uploading the entire codebase, VisionClaw ma
 *   `LAST_RUN.log`: Timestamped trace log of the Node.js server.
 *   `ERRORS.log`: Contains fatal error listings.
 *   `WARNINGS.log`: Logs heuristic warnings and non-fatal alerts.
+
+---
+
+## ⚠️ Sticking Points & Known Issues
+
+1. **Audio Device Contention (WebRTC vs. Gemini Live)**: Android's audio focus system does not support running high-frequency WebRTC audio and Bluetooth Classic SCO (Gemini Live) simultaneously. The client implements mutual exclusion, where starting one stream automatically suspends the other to avoid hardware allocation crashes.
+2. **mDNS Resolution on Enterprise Wi-Fi**: Many enterprise and corporate Wi-Fi configurations block multicast DNS packets. If gateway autodiscovery fails to resolve the host address, you must manually specify the local IP in the dashboard input field.
+3. **Wearable SDK Life-cycle & Hardware Locks**: If the app is backgrounded without cleanly terminating the DAT device session, the wearable hardware stream slot gets locked. MainActivity integrates lifecycle triggers (`onPause`/`onDestroy`) to execute stop calls proactively.
+4. **SerpApi Upstream Latency**: Outbound Google Search queries via SerpApi can occasionally experience transient connection timeouts. The dashboard gateway proxy handles this with strict 10s upstream request limits and propagates exact HTTP error messages to the client instead of masking them with simulated success or stale values.
+5. **Event Client Nonce Challenges**: The OpenClaw event listener client uses Protocol version 3 and receives challenge nonces from the gateway daemon, requiring immediate handshake responses to authenticate operators.
+
+---
+
+## 🔮 Future Functionality & Roadmap
+
+1. **Persistent Local Vector Cache**: Add local vector search capabilities directly on the gateway for local photo retrieval queries using low-latency embeddings.
+2. **Dynamic Audio Resampling Policies**: Integrate adaptive resampling models that adjust sample sizes based on Bluetooth Classic signal-to-noise ratio metrics.
+3. **H.265 / AV1 Hardware Encoding**: Support next-generation video compression standard encoding directly on Android for WebRTC POV broadcasting to lower cellular link usage.
