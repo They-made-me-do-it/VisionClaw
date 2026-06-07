@@ -81,6 +81,12 @@ graph TD
     *   Initiates bidirectional stateful WebSocket handshakes with the `gemini-3.1-flash-live-preview` endpoint. Parses multi-part server payload arrays to extract inline text transcripts alongside binary audio output.
 13. **Uncaught Hardware Lock & State Transition Alerting**:
     *   Intercepts rapid start-stop transition loops or uncaught device driver exceptions to proactively flag hardware slot locks, alert the operator via UI overlays, and request physical case-hinge resets.
+14. **Custom Skills Playbook (`amazon-recon`)**:
+    *   Integrates a customized local skill directory containing operational runbooks (`SKILL.md`) that lock down agent execution behavior and eliminate uncontrolled input hallucinations.
+15. **ClawHub API Redirection & Mocking**:
+    *   Redirects packages validation lookups (`OPENCLAW_CLAWHUB_URL`) to a local dashboard server registry mock to execute rapid offline skill verifications.
+16. **Enforced Docker Sandbox Isolation**:
+    *   Applies a robust execution profile (`mode: "non-main"`, `backend: "docker"`) under `openclaw.json` security settings to run all untrusted containerized processes safely.
 
 ---
 
