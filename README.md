@@ -73,6 +73,14 @@ graph TD
     *   Proxies Google Search queries restricting results to `site:amazon.com` through SerpApi to retrieve live product listings, prices, and links dynamically to bypass traditional API constraints.
 9.  **MMDuet2 Alternative Local Backend**:
     *   Provides fallback support for local edge models (such as `MMDuet2` on port `8000`) with automatic KV cache lifecycle resets (tripping at 20,000 tokens) to prevent system memory overflows.
+10. **Downstream Audio Playback Jitter Defense**:
+    *   Implements an in-memory queue and a high-priority paced playback thread to buffer and pace incoming 24 kHz Mono Int16 PCM audio packets, preventing stutter and dropouts.
+11. **Egocentric Face-Tracking Privacy Mask**:
+    *   Employs native `android.media.FaceDetector` at the physical edge to detect pedestrian and bystander faces within the central 60% visual field. Face coordinates are processed via canvas rendering to apply real-time pixelation before visual data leaves the device.
+12. **Gemini 3.1 Live WebSocket Protocol Ingestion**:
+    *   Initiates bidirectional stateful WebSocket handshakes with the `gemini-3.1-flash-live-preview` endpoint. Parses multi-part server payload arrays to extract inline text transcripts alongside binary audio output.
+13. **Uncaught Hardware Lock & State Transition Alerting**:
+    *   Intercepts rapid start-stop transition loops or uncaught device driver exceptions to proactively flag hardware slot locks, alert the operator via UI overlays, and request physical case-hinge resets.
 
 ---
 
@@ -97,7 +105,7 @@ graph TD
 │           ├── VideoPipeline.kt     # Resolution scaling & 1 fps throttling
 │           ├── WebRTCClient.kt      # WebSocket signaling & WebRTC broadcast
 │           └── GeminiLiveService.kt # OkHttp WebSocket loop & context window compression
-├── ios/                        # iOS client files (Ignored per user directive)
+├── samples/                    # Evacuated duplicate native package for CameraAccessAndroid
 └── _handoff/                   # Handoff logs & diagnostic reports
 ```
 

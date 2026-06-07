@@ -241,10 +241,28 @@ const server = http.createServer((req, res) => {
                 res.end(JSON.stringify([]));
                 return;
             }
-            const images = files.filter(f => f.startsWith('capture_') && f.endsWith('.jpg'))
-                                 .sort((a, b) => b.localeCompare(a)); // sort descending (newest first)
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(images));
+            const filteredFiles = files.filter(f => f.startsWith('capture_') && f.endsWith('.jpg'));
+            if (filteredFiles.length === 0) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify([]));
+                return;
+            }
+            const images = [];
+            let pending = filteredFiles.length;
+            filteredFiles.forEach(f => {
+                const fullPath = path.join(assetsDir, f);
+                fs.stat(fullPath, (statErr, stats) => {
+                    if (!statErr && stats.size > 1024) {
+                        images.push(f);
+                    }
+                    pending--;
+                    if (pending === 0) {
+                        images.sort((a, b) => b.localeCompare(a)); // sort descending (newest first)
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify(images));
+                    }
+                });
+            });
         });
         return;
     }
