@@ -144,6 +144,19 @@ h1 {
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
+.status-active {
+    color: #c084fc;
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+}
+
+.status-listening {
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
 /* Glassmorphic Cards */
 .card {
     background: var(--card-bg);

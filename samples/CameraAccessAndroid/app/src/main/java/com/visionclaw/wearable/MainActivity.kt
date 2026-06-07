@@ -278,6 +278,13 @@ public class MainActivity : Activity() {
 
     private fun startGeminiSession() {
         trackStateTransition()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 101)
+                Toast.makeText(this, "Please grant microphone permission and try again.", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
         val apiKey = apiKeyInput.text.toString().trim()
         if (apiKey.isEmpty()) {
             Toast.makeText(this, "Please enter a valid Gemini API Key", Toast.LENGTH_SHORT).show()

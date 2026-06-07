@@ -53,6 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let micStreamActive = false;
     let nextPlayTime = 0; // For queueing downstream audio chunks seamlessly
 
+    // AI Speech visual components
+    let aiAnalyser = null;
+    let aiDataArray = null;
+    let aiActive = false;
+    let aiSilenceTimeout = null;
+
     // No Fallback Image allowed due to strict anti-mocking rules
     // WebSocket state
     let openclawGatewayToken = 'oc_live_token_7a9c8b3d2e1f0';
@@ -220,6 +226,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
                 const inputData = e.inputBuffer.getChannelData(0);
+
+                // Smart local VAD based on RMS volume check
+                let sum = 0;
+                for (let i = 0; i < inputData.length; i++) {
+                    sum += inputData[i] * inputData[i];
+                }
+                const rms = Math.sqrt(sum / inputData.length);
+                if (rms > 0.015 && !aiActive) {
+                    if (socketStatusBadge) {
+                        socketStatusBadge.innerText = "LISTENING";
+                        socketStatusBadge.className = "status-value status-listening";
+                    }
+                } else if (rms <= 0.015 && !aiActive) {
+                    if (socketStatusBadge) {
+                        socketStatusBadge.innerText = "CONNECTED";
+                        socketStatusBadge.className = "status-value status-ok";
+                    }
+                }
+
                 const resampled = resample(inputData, e.inputBuffer.sampleRate, 16000);
                 const pcmBuffer = floatTo16BitPCM(resampled);
                 const base64Audio = base64ArrayBuffer(pcmBuffer.buffer);
@@ -293,27 +318,53 @@ document.addEventListener('DOMContentLoaded', () => {
         requestAnimationFrame(drawAudioWaveform);
         waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
 
-        const gradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
-        gradient.addColorStop(0, '#3b82f6');
-        gradient.addColorStop(0.5, '#8b5cf6');
-        gradient.addColorStop(1, '#ec4899');
-        
-        waveformCtx.strokeStyle = gradient;
-        waveformCtx.lineWidth = 2.5;
-        waveformCtx.beginPath();
+        if (aiActive && aiDataArray) {
+            aiAnalyser.getByteTimeDomainData(aiDataArray);
+            const aiGradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
+            aiGradient.addColorStop(0, '#c084fc');
+            aiGradient.addColorStop(0.5, '#a78bfa');
+            aiGradient.addColorStop(1, '#ec4899');
+            
+            waveformCtx.strokeStyle = aiGradient;
+            waveformCtx.lineWidth = 3.5;
+            waveformCtx.shadowColor = 'rgba(139, 92, 246, 0.4)';
+            waveformCtx.shadowBlur = 10;
+            waveformCtx.beginPath();
 
-        if (micStreamActive && dataArray) {
-            analyser.getByteTimeDomainData(dataArray);
-            const sliceWidth = waveformCanvas.width / dataArray.length;
+            const sliceWidth = waveformCanvas.width / aiDataArray.length;
             let x = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-                const v = dataArray[i] / 128.0;
+            for (let i = 0; i < aiDataArray.length; i++) {
+                const v = aiDataArray[i] / 128.0;
                 const y = v * (waveformCanvas.height / 2);
                 if (i === 0) waveformCtx.moveTo(x, y);
                 else waveformCtx.lineTo(x, y);
                 x += sliceWidth;
             }
+            waveformCtx.stroke();
+            waveformCtx.shadowBlur = 0;
         } else {
+            const gradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
+            gradient.addColorStop(0, '#3b82f6');
+            gradient.addColorStop(0.5, '#8b5cf6');
+            gradient.addColorStop(1, '#ec4899');
+            
+            waveformCtx.strokeStyle = gradient;
+            waveformCtx.lineWidth = 2.5;
+            waveformCtx.beginPath();
+
+            if (micStreamActive && dataArray) {
+                analyser.getByteTimeDomainData(dataArray);
+                const sliceWidth = waveformCanvas.width / dataArray.length;
+                let x = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const v = dataArray[i] / 128.0;
+                    const y = v * (waveformCanvas.height / 2);
+                    if (i === 0) waveformCtx.moveTo(x, y);
+                    else waveformCtx.lineTo(x, y);
+                    x += sliceWidth;
+                }
+                waveformCtx.stroke();
+            } else {
             const amp = 20 + Math.sin(Date.now() * 0.003) * 8;
             const freq = 0.045;
             audioPhase += 0.12;
@@ -322,6 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (x === 0) waveformCtx.moveTo(x, y);
                 else waveformCtx.lineTo(x, y);
             }
+        }
         }
         waveformCtx.stroke();
     }
@@ -568,7 +620,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
+        
+        // Setup visual AI Analyser
+        if (!aiAnalyser) {
+            aiAnalyser = audioCtx.createAnalyser();
+            aiAnalyser.fftSize = 512;
+            const bufferLength = aiAnalyser.frequencyBinCount;
+            aiDataArray = new Uint8Array(bufferLength);
+        }
+        source.connect(aiAnalyser);
+        aiAnalyser.connect(audioCtx.destination);
         
         const currentTime = audioCtx.currentTime;
         if (nextPlayTime < currentTime) {
@@ -576,6 +637,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         source.start(nextPlayTime);
         nextPlayTime += audioBuffer.duration;
+
+        // Visual feedback when AI starts speaking
+        aiActive = true;
+        if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
+            socketStatusBadge.innerText = "SPEAKING";
+            socketStatusBadge.className = "status-value status-active";
+        }
+
+        if (aiSilenceTimeout) clearTimeout(aiSilenceTimeout);
+        const durationMs = audioBuffer.duration * 1000;
+        aiSilenceTimeout = setTimeout(() => {
+            if (audioCtx.currentTime >= nextPlayTime - 0.05) {
+                aiActive = false;
+                if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
+                    socketStatusBadge.innerText = "CONNECTED";
+                    socketStatusBadge.className = "status-value status-ok";
+                }
+            }
+        }, durationMs + 100);
     }
 
     // Playback raw binary ArrayBuffer PCM audio
@@ -594,7 +674,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const source = audioCtx.createBufferSource();
         source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
+        
+        // Setup visual AI Analyser
+        if (!aiAnalyser) {
+            aiAnalyser = audioCtx.createAnalyser();
+            aiAnalyser.fftSize = 512;
+            const bufferLength = aiAnalyser.frequencyBinCount;
+            aiDataArray = new Uint8Array(bufferLength);
+        }
+        source.connect(aiAnalyser);
+        aiAnalyser.connect(audioCtx.destination);
         
         const currentTime = audioCtx.currentTime;
         if (nextPlayTime < currentTime) {
@@ -602,6 +691,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         source.start(nextPlayTime);
         nextPlayTime += audioBuffer.duration;
+
+        // Visual feedback when AI starts speaking
+        aiActive = true;
+        if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
+            socketStatusBadge.innerText = "SPEAKING";
+            socketStatusBadge.className = "status-value status-active";
+        }
+
+        if (aiSilenceTimeout) clearTimeout(aiSilenceTimeout);
+        const durationMs = audioBuffer.duration * 1000;
+        aiSilenceTimeout = setTimeout(() => {
+            if (audioCtx.currentTime >= nextPlayTime - 0.05) {
+                aiActive = false;
+                if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
+                    socketStatusBadge.innerText = "CONNECTED";
+                    socketStatusBadge.className = "status-value status-ok";
+                }
+            }
+        }, durationMs + 100);
     }
 
     // Route a live tool call from Gemini to OpenClaw

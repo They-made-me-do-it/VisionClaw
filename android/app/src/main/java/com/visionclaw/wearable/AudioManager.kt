@@ -5,7 +5,10 @@
 package com.visionclaw.wearable
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
@@ -32,6 +35,41 @@ public class AudioManager(private val context: Context) {
     private var isPlaybackActive = false
     private var playbackThread: Thread? = null
 
+    private var isReceiverRegistered = false
+
+    private val scoReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val state = intent.getIntExtra(AndroidAudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+            System.out.println("[AudioManager] SCO Audio State updated: $state")
+            if (state == AndroidAudioManager.SCO_AUDIO_STATE_CONNECTED) {
+                System.out.println("[AudioManager] Bluetooth SCO link connected. Activating routing.")
+                androidAudioManager.isBluetoothScoOn = true
+                androidAudioManager.mode = AndroidAudioManager.MODE_IN_COMMUNICATION
+            } else if (state == AndroidAudioManager.SCO_AUDIO_STATE_DISCONNECTED) {
+                System.out.println("[AudioManager] Bluetooth SCO link disconnected.")
+            }
+        }
+    }
+
+    private fun registerScoReceiver() {
+        if (!isReceiverRegistered) {
+            context.registerReceiver(
+                scoReceiver,
+                IntentFilter(AndroidAudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+            )
+            isReceiverRegistered = true
+        }
+    }
+
+    private fun unregisterScoReceiver() {
+        if (isReceiverRegistered) {
+            try {
+                context.unregisterReceiver(scoReceiver)
+            } catch (e: Exception) {}
+            isReceiverRegistered = false
+        }
+    }
+
     private fun startPlaybackLoop() {
         isPlaybackActive = true
         audioQueue.clear()
@@ -39,7 +77,7 @@ public class AudioManager(private val context: Context) {
             while (isPlaybackActive) {
                 try {
                     val chunk = audioQueue.poll(500, TimeUnit.MILLISECONDS)
-                    if (chunk != null && isRecording) {
+                    if (chunk != null) {
                         audioTrack?.let { track ->
                             if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                                 track.write(chunk, 0, chunk.size)
@@ -134,10 +172,11 @@ public class AudioManager(private val context: Context) {
      * Redirects audio routing to the Bluetooth SCO profile (Meta Ray-Bans).
      */
     public fun configureBluetoothSCO() {
+        registerScoReceiver()
         androidAudioManager.startBluetoothSco()
         androidAudioManager.isBluetoothScoOn = true
         androidAudioManager.mode = AndroidAudioManager.MODE_IN_COMMUNICATION
-        System.out.println("[AudioManager] Bluetooth SCO audio routing requested and set to MODE_IN_COMMUNICATION.")
+        System.out.println("[AudioManager] Bluetooth SCO audio routing requested, mode IN_COMMUNICATION set, and SCO receiver registered.")
     }
 
     /**
@@ -168,11 +207,13 @@ public class AudioManager(private val context: Context) {
             bufferSize
         )
 
-        val trackBufferSize = AudioTrack.getMinBufferSize(
+        val trackMinBufferSize = AudioTrack.getMinBufferSize(
             sampleRateOutput,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
+        // Use a larger buffer size (at least 64KB) to act as a proper jitter buffer and prevent popping/clicking from underruns.
+        val trackBufferSize = Math.max(trackMinBufferSize, 64 * 1024)
 
         // Initialize AudioTrack for playing downstream Gemini Live audio
         audioTrack = AudioTrack(
@@ -196,6 +237,9 @@ public class AudioManager(private val context: Context) {
                 if (readBytes > 0) {
                     val chunk = audioBuffer.copyOf(readBytes)
                     onChunk(chunk)
+                } else if (readBytes < 0) {
+                    System.err.println("[AudioManager] AudioRecord read error status: $readBytes")
+                    try { Thread.sleep(100) } catch (e: Exception) {}
                 }
             }
         }
@@ -220,10 +264,12 @@ public class AudioManager(private val context: Context) {
         audioTrack = null
         
         androidAudioManager.stopBluetoothSco()
+        androidAudioManager.isBluetoothScoOn = false
         androidAudioManager.mode = AndroidAudioManager.MODE_NORMAL
+        unregisterScoReceiver()
         abandonAudioFocus()
         
-        System.out.println("[AudioManager] Audio recording and playback hardware released.")
+        System.out.println("[AudioManager] Audio recording and playback hardware released. SCO routing disabled.")
     }
 
     /**
