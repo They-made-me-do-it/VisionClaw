@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
         postFeedback.style.display = 'block';
         postFeedback.innerText = "Initializing Power-On Self-Test (POST)...";
         isPostChecking = true;
+        localModeCheckbox.disabled = true; // Block interaction during diagnostic test
         setBadgeStatus(postOverallStatus, 'post: checking', 'state-checking');
 
         // Step 1: Check Node Server
@@ -129,6 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setLightStatus(lightNode, 'error');
             postFeedback.innerText = "POST Failed: Node server unreachable.";
             setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+            localModeCheckbox.disabled = false;
             isPostChecking = false;
             return;
         }
@@ -151,6 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setLightStatus(lightGateway, 'error');
             postFeedback.innerText = "POST Failed: OpenClaw gateway offline. Ensure port 18789 is running.";
             setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+            localModeCheckbox.disabled = false;
             isPostChecking = false;
             return;
         }
@@ -181,6 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setLightStatus(lightPhone, 'error');
                 postFeedback.innerText = "POST Failed: Client device heartbeat not detected. Connect phone or switch to Local PC Mode.";
                 setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+                localModeCheckbox.disabled = false;
                 isPostChecking = false;
                 return;
             }
@@ -204,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setLightStatus(lightGlasses, 'error');
                 postFeedback.innerText = "POST Failed: Cannot access microphone.";
                 setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+                localModeCheckbox.disabled = false;
                 isPostChecking = false;
                 return;
             }
@@ -238,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setLightStatus(lightGemini, 'active');
             postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake complete.";
             setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
+            localModeCheckbox.disabled = false;
             
             // Automatically engage microphone and ask Gemini to check in
             isPostChecking = false;
@@ -245,10 +251,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
             sendIntroGreeting(handshakePrompt);
         } else {
-            setBadgeStatus(postGemini, 'pending', 'state-pending');
-            setLightStatus(lightGemini, 'off');
             postFeedback.innerText = "POST Local Checks Passed. Connecting to Gemini Live for voice validation...";
-            await connectGeminiLive();
+            try {
+                await connectGeminiLive();
+                
+                setBadgeStatus(postGemini, 'pass', 'state-pass');
+                setLightStatus(lightGemini, 'active');
+                postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake active...";
+                setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
+                localModeCheckbox.disabled = false;
+                
+                isPostChecking = false;
+                
+                // Automatically engage microphone and ask Gemini to check in
+                setTimeout(async () => {
+                    await startMicrophoneCapture();
+                    const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
+                    sendIntroGreeting(handshakePrompt);
+                }, 800);
+            } catch (err) {
+                setBadgeStatus(postGemini, 'fail', 'state-fail');
+                setLightStatus(lightGemini, 'error');
+                postFeedback.innerText = `POST Failed: Gemini Live Connection Error: ${err.message}`;
+                setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+                localModeCheckbox.disabled = false;
+                isPostChecking = false;
+            }
         }
     }
 
@@ -295,156 +323,155 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 3. Browser Gemini Live WebSocket Client ---
-    async function connectGeminiLive() {
-        const apiKey = apiKeyInput.value.trim();
-        const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
+    function connectGeminiLive() {
+        return new Promise((resolve, reject) => {
+            const apiKey = apiKeyInput.value.trim();
+            const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
 
-        if (!apiKey) {
-            logTerminal("Connection Failed: Gemini API Key is required.", "error");
-            alert("Please enter a Gemini API Key.");
-            return;
-        }
-
-        logTerminal("Initiating WebSocket connection to Gemini Live...", "system");
-        
-        // Initialize Web Audio context
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-        }
-
-        const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-
-        try {
-            ws = new WebSocket(wsUrl);
-        } catch(e) {
-            logTerminal(`WebSocket failed to create: ${e.message}`, "error");
-            return;
-        }
-
-        ws.onopen = () => {
-            isWebsocketConnected = true;
-            logTerminal("WebSocket connection successfully established.", "server");
-            socketStatusBadge.innerText = "CONNECTED";
-            socketStatusBadge.className = "status-value status-ok";
-            setLightStatus(lightGemini, 'active');
-
-            // Send setup config block
-            const setupMsg = {
-                setup: {
-                    model: "models/gemini-2.0-flash-exp"
-                }
-            };
-            ws.send(JSON.stringify(setupMsg));
-            logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.0-flash-exp] sent.", "client");
-
-            // Update UI elements
-            connectWsBtn.classList.add('hidden');
-            disconnectWsBtn.classList.remove('hidden');
-
-            // Send initial introduction
-            sendIntroGreeting();
-
-            // Start Webcam frame streaming if permitted
-            startCameraPipeline();
-        };
-
-        ws.onmessage = async (event) => {
-            let text = "";
-            if (event.data instanceof Blob) {
-                // If it is raw binary PCM, play it directly
-                const arrayBuffer = await event.data.arrayBuffer();
-                const pcm16 = new Int16Array(arrayBuffer);
-                playPCM24k(pcm16);
+            if (!apiKey) {
+                logTerminal("Connection Failed: Gemini API Key is required.", "error");
+                reject(new Error("Gemini API Key is missing. Please configure D:\\Meta\\.env."));
                 return;
-            } else {
-                text = event.data;
             }
 
+            logTerminal("Initiating WebSocket connection to Gemini Live...", "system");
+            
+            // Initialize Web Audio context
             try {
-                const response = JSON.parse(text);
-                
-                // Print to terminal logs
-                if (response.setupComplete) {
-                    logTerminal("< setupComplete payload received.", "server");
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            } catch (e) {
+                logTerminal(`Failed to initialize AudioContext: ${e.message}`, "error");
+            }
+
+            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+            } catch(e) {
+                logTerminal(`WebSocket failed to create: ${e.message}`, "error");
+                reject(e);
+                return;
+            }
+
+            // Connection phase timeout (10 seconds)
+            const connTimeout = setTimeout(() => {
+                if (ws && ws.readyState !== WebSocket.OPEN) {
+                    logTerminal("Gemini Live WebSocket connection timed out.", "error");
+                    try { ws.close(); } catch(err) {}
+                    reject(new Error("Connection timed out waiting for setup handshake."));
+                }
+            }, 10000);
+
+            ws.onopen = () => {
+                isWebsocketConnected = true;
+                logTerminal("WebSocket connection successfully established.", "server");
+                socketStatusBadge.innerText = "CONNECTED";
+                socketStatusBadge.className = "status-value status-ok";
+                setLightStatus(lightGemini, 'active');
+
+                // Send setup config block
+                const setupMsg = {
+                    setup: {
+                        model: "models/gemini-2.0-flash-exp"
+                    }
+                };
+                ws.send(JSON.stringify(setupMsg));
+                logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.0-flash-exp] sent.", "client");
+
+                // Update UI elements
+                connectWsBtn.classList.add('hidden');
+                disconnectWsBtn.classList.remove('hidden');
+
+                // Start Webcam frame streaming if permitted
+                startCameraPipeline();
+            };
+
+            ws.onmessage = async (event) => {
+                let text = "";
+                if (event.data instanceof Blob) {
+                    const arrayBuffer = await event.data.arrayBuffer();
+                    const pcm16 = new Int16Array(arrayBuffer);
+                    playPCM24k(pcm16);
+                    return;
+                } else {
+                    text = event.data;
+                }
+
+                try {
+                    const response = JSON.parse(text);
                     
-                    if (isPostChecking) {
-                        isPostChecking = false;
-                        postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake active...";
-                        setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
+                    // Print to terminal logs
+                    if (response.setupComplete) {
+                        clearTimeout(connTimeout);
+                        logTerminal("< setupComplete payload received.", "server");
+                        resolve();
+                    }
+
+                    // Handle text transcript display
+                    if (response.serverContent) {
+                        const serverContent = response.serverContent;
+                        const modelTurn = serverContent.modelTurn;
+                        const parts = modelTurn ? modelTurn.parts : serverContent.parts;
                         
-                        // Automatically engage microphone and ask Gemini to check in
-                        setTimeout(async () => {
-                            await startMicrophoneCapture();
-                            const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
-                            sendIntroGreeting(handshakePrompt);
-                        }, 800);
-                    } else {
-                        sendIntroGreeting();
-                    }
-                }
-
-                // Handle text transcript display
-                if (response.serverContent) {
-                    const serverContent = response.serverContent;
-                    const modelTurn = serverContent.modelTurn;
-                    const parts = modelTurn ? modelTurn.parts : serverContent.parts;
-                    
-                    if (parts) {
-                        parts.forEach(part => {
-                            if (part.text) {
-                                logTerminal(`Gemini: ${part.text}`, "server");
-                            }
-                            if (part.inlineData) {
-                                const mime = part.inlineData.mimeType;
-                                if (mime.includes("audio/pcm")) {
-                                    const base64Data = part.inlineData.data;
-                                    const rawBytes = atob(base64Data);
-                                    const pcmData = new Int16Array(rawBytes.length / 2);
-                                    for(let i=0; i<pcmData.length; i++) {
-                                        pcmData[i] = (rawBytes.charCodeAt(i*2) & 0xFF) | ((rawBytes.charCodeAt(i*2+1) & 0xFF) << 8);
-                                    }
-                                    playPCM24k(pcmData);
+                        if (parts) {
+                            parts.forEach(part => {
+                                if (part.text) {
+                                    logTerminal(`Gemini: ${part.text}`, "server");
                                 }
-                            }
-                        });
+                                if (part.inlineData) {
+                                    const mime = part.inlineData.mimeType;
+                                    if (mime.includes("audio/pcm")) {
+                                        const base64Data = part.inlineData.data;
+                                        const rawBytes = atob(base64Data);
+                                        const pcmData = new Int16Array(rawBytes.length / 2);
+                                        for(let i=0; i<pcmData.length; i++) {
+                                            pcmData[i] = (rawBytes.charCodeAt(i*2) & 0xFF) | ((rawBytes.charCodeAt(i*2+1) & 0xFF) << 8);
+                                        }
+                                        playPCM24k(pcmData);
+                                    }
+                                }
+                            });
+                        }
                     }
-                }
 
-                // Handle session resumption tokens
-                if (response.sessionResumptionUpdate) {
-                    const token = response.sessionResumptionUpdate.new_handle || response.sessionResumptionUpdate.resumptionToken;
-                    if (token) {
-                        resumptionTokenEl.innerText = token.slice(0, 16) + "...";
+                    // Handle session resumption tokens
+                    if (response.sessionResumptionUpdate) {
+                        const token = response.sessionResumptionUpdate.new_handle || response.sessionResumptionUpdate.resumptionToken;
+                        if (token) {
+                            resumptionTokenEl.innerText = token.slice(0, 16) + "...";
+                        }
                     }
-                }
 
-                // Handle Tool Calls
-                if (response.toolCall) {
-                    const functionCalls = response.toolCall.functionCalls;
-                    if (functionCalls) {
-                        for (let call of functionCalls) {
-                            if (call.name === "execute") {
-                                handleGeminiToolCall(call.args, call.id, gatewayHost);
+                    // Handle Tool Calls
+                    if (response.toolCall) {
+                        const functionCalls = response.toolCall.functionCalls;
+                        if (functionCalls) {
+                            for (let call of functionCalls) {
+                                if (call.name === "execute") {
+                                    handleGeminiToolCall(call.args, call.id, gatewayHost);
+                                }
                             }
                         }
                     }
+                } catch(e) {
+                    console.error("Parse error:", e);
                 }
-            } catch(e) {
-                console.error("Parse error:", e);
-            }
-        };
+            };
 
-        ws.onerror = (error) => {
-            logTerminal(`WebSocket Error occurred. Connection aborted.`, "error");
-            console.error(error);
-        };
+            ws.onerror = (error) => {
+                clearTimeout(connTimeout);
+                logTerminal(`WebSocket Error occurred. Connection aborted.`, "error");
+                reject(new Error("WebSocket encountered a network error. Check Internet connectivity."));
+            };
 
-        ws.onclose = () => {
-            handleWebsocketCleanup();
-        };
+            ws.onclose = (e) => {
+                clearTimeout(connTimeout);
+                handleWebsocketCleanup();
+                reject(new Error(`WebSocket closed. Code: ${e.code}.`));
+            };
+        });
     }
 
     function sendIntroGreeting(customPrompt) {
@@ -783,7 +810,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     postOverallStatus.addEventListener('click', runPostCheck);
 
-    connectWsBtn.addEventListener('click', connectGeminiLive);
+    connectWsBtn.addEventListener('click', async () => {
+        try {
+            await connectGeminiLive();
+            sendIntroGreeting();
+        } catch (err) {
+            logTerminal(`Connection failed: ${err.message}`, "error");
+            alert(`Connection failed: ${err.message}`);
+        }
+    });
     disconnectWsBtn.addEventListener('click', disconnectGeminiLive);
 
     micToggleBtn.addEventListener('click', () => {
