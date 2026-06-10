@@ -13,6 +13,7 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 // Global state for diagnostics
 let latestDiagnosticReport = null;
+let voiceCheckStatus = "PENDING"; // State: "PENDING", "PASS", "FAIL"
 
 // Load and parse d:\Meta\.env configuration file
 const envPath = path.join(__dirname, '.env');
@@ -106,6 +107,30 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // 3a. API: Remote Console Logger
+    if (req.method === 'POST' && req.url === '/api/log') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                const logMsg = `[BROWSER LOG] [${payload.type.toUpperCase()}] ${payload.message}`;
+                console.log(logMsg);
+                
+                // Write to handoff/LAST_RUN.log too
+                const logFile = path.join(__dirname, '_handoff', 'LAST_RUN.log');
+                fs.appendFileSync(logFile, `${new Date().toISOString()} ${logMsg}\n`);
+
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'OK' }));
+            } catch (e) {
+                res.writeHead(400);
+                res.end();
+            }
+        });
+        return;
+    }
+
     // 3b. API: POST Check
     if (req.method === 'GET' && req.url === '/api/post_check') {
         const geminiKey = envConfig['GEMINI_API_KEY'] || process.env.GEMINI_API_KEY || '';
@@ -132,15 +157,55 @@ const server = http.createServer((req, res) => {
         });
 
         gatewayCheck.then((gwOnline) => {
+            const nodeOk = "PASS";
+            const gwOk = gwOnline ? "PASS" : "FAIL";
+            const keyOk = (geminiKey && geminiKey.trim().length > 0) ? "PASS" : "FAIL";
+            const tokenOk = (gwToken && gwToken.trim().length > 0) ? "PASS" : "FAIL";
+            
+            const overallOk = (
+                nodeOk === "PASS" &&
+                gwOk === "PASS" &&
+                keyOk === "PASS" &&
+                tokenOk === "PASS" &&
+                voiceCheckStatus === "PASS"
+            ) ? "PASS" : (
+                (gwOk === "FAIL" || keyOk === "FAIL" || tokenOk === "FAIL" || voiceCheckStatus === "FAIL") ? "FAIL" : "PENDING"
+            );
+
             const report = {
-                nodeServer: "PASS",
-                gateway: gwOnline ? "PASS" : "FAIL",
-                geminiApiKey: (geminiKey && geminiKey.trim().length > 0) ? "PASS" : "FAIL",
-                gatewayToken: (gwToken && gwToken.trim().length > 0) ? "PASS" : "FAIL",
-                overall: (gwOnline && geminiKey.trim().length > 0 && gwToken.trim().length > 0) ? "PASS" : "FAIL"
+                nodeServer: nodeOk,
+                gateway: gwOk,
+                geminiApiKey: keyOk,
+                gatewayToken: tokenOk,
+                voiceCheck: voiceCheckStatus,
+                overall: overallOk
             };
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(report));
+        });
+        return;
+    }
+
+    // 3c. API: POST Check Voice Handshake Update
+    if (req.method === 'POST' && req.url === '/api/post_check/voice') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                if (payload.status === "PASS" || payload.status === "FAIL" || payload.status === "PENDING") {
+                    voiceCheckStatus = payload.status;
+                    console.log(`[POST CHECK] Voice handshake status updated to: ${voiceCheckStatus}`);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ status: 'OK', voiceCheckStatus }));
+                } else {
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'Invalid status' }));
+                }
+            } catch (e) {
+                res.writeHead(400);
+                res.end();
+            }
         });
         return;
     }
@@ -210,7 +275,12 @@ const server = http.createServer((req, res) => {
             res.writeHead(404);
             res.end('Not Found');
         } else {
-            res.writeHead(200, { 'Content-Type': contentType });
+            res.writeHead(200, { 
+                'Content-Type': contentType,
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
             res.end(content);
         }
     });

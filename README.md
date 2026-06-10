@@ -150,6 +150,12 @@ Test that the secure WebSocket connection connects to Gemini Live, performs the 
 python live_voice_test.py
 ```
 
+### 6. Run Headless Stateful Two-Turn Conversational Handshake
+Execute a headless simulation of the complete two-turn voice handshake over Gemini Live WebSocket, which updates the backend server's diagnostic status upon verification:
+```powershell
+python run_voice_handshake.py
+```
+
 
 ---
 

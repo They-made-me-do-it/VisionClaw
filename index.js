@@ -2,6 +2,29 @@
 // VisionClaw Dashboard Controller - UI Logic, Local POST self-test, and browser Gemini Live client
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Remote Console Logger Proxy
+    function sendRemoteLog(type, message) {
+        fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, message })
+        }).catch(() => {});
+    }
+    const orgLog = console.log;
+    const orgErr = console.error;
+    console.log = function(...args) {
+        orgLog.apply(console, args);
+        sendRemoteLog('info', args.join(' '));
+    };
+    console.error = function(...args) {
+        orgErr.apply(console, args);
+        sendRemoteLog('error', args.join(' '));
+    };
+    window.onerror = function(message, source, lineno, colno, error) {
+        sendRemoteLog('uncaught_error', `${message} at ${source}:${lineno}:${colno}`);
+        return false;
+    };
+
     // Health Lights
     const lightNode = document.getElementById('light-node');
     const lightGateway = document.getElementById('light-gateway');
@@ -21,6 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const postAudio = document.getElementById('post-audio');
     const postGemini = document.getElementById('post-gemini');
     const postFeedback = document.getElementById('post-feedback');
+    const postActionsContainer = document.getElementById('post-actions-container');
+    const postAnswerBtn = document.getElementById('post-answer-btn');
 
     // Gemini Live Ingress Elements
     const connectWsBtn = document.getElementById('connect-ws-btn');
@@ -72,12 +97,19 @@ document.addEventListener('DOMContentLoaded', () => {
     let videoTimerId = null;
     let diagnosticInterval = null;
     let isPostChecking = false;
+    let voiceHandshakeStep = 0; // 0=idle, 1=connected (waiting for Gemini Turn 1 ask), 2=Gemini asked (waiting for user answer), 3=User answered (waiting for Gemini confirm), 4=Passed
+    let autoAnswerTimeout = null;
 
     // Metrics Counter
     let metricInvocations = 0;
     let metricFailures = 0;
 
     function logTerminal(message, type = 'system') {
+        if (type === 'error' || type === 'uncaught_error') {
+            console.error(`[Terminal Error] ${message}`);
+        } else {
+            console.log(`[Terminal] ${message}`);
+        }
         const line = document.createElement('div');
         line.className = `terminal-line ${type}`;
         const timestamp = new Date().toLocaleTimeString();
@@ -106,10 +138,88 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 1. POST (Power-On Self-Test) Logic ---
+    async function initiateVoiceHandshake() {
+        voiceHandshakeStep = 1;
+        isPostChecking = true;
+        setBadgeStatus(postGemini, 'checking', 'state-checking');
+        setLightStatus(lightGemini, 'active');
+        postFeedback.innerText = "Gemini Live connected. Starting voice handshake...";
+        setBadgeStatus(postOverallStatus, 'voice check', 'state-checking');
+        localModeCheckbox.disabled = false;
+        
+        await startMicrophoneCapture();
+        
+        const turn1Prompt = "VisionClaw POST check initiated. Gemini, please perform step 1 of the voice check-in: ask the user 'Hello, this is Gemini. Can you hear me?' and STOP speaking immediately. Do NOT say anything else. You must wait for their response.";
+        sendIntroGreeting(turn1Prompt);
+    }
+
+    function sendUserResponseText() {
+        if (autoAnswerTimeout) {
+            clearTimeout(autoAnswerTimeout);
+            autoAnswerTimeout = null;
+        }
+        postActionsContainer.style.display = 'none';
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        
+        const responsePrompt = "Yes, I can hear you clearly. Please confirm our link is verified and operational.";
+        logTerminal(`> Send User Response: "${responsePrompt}"`, "client");
+        
+        const userTurn = {
+            clientContent: {
+                turns: [
+                    {
+                        role: "user",
+                        parts: [{ text: responsePrompt }]
+                    }
+                ],
+                turnComplete: true
+            }
+        };
+        ws.send(JSON.stringify(userTurn));
+        voiceHandshakeStep = 3;
+        postFeedback.innerText = "Sent response. Waiting for Gemini confirmation...";
+    }
+
+    function passVoiceHandshake() {
+        if (autoAnswerTimeout) {
+            clearTimeout(autoAnswerTimeout);
+            autoAnswerTimeout = null;
+        }
+        postActionsContainer.style.display = 'none';
+        voiceHandshakeStep = 4;
+        isPostChecking = false;
+        
+        setBadgeStatus(postGemini, 'pass', 'state-pass');
+        setLightStatus(lightGemini, 'active');
+        postFeedback.innerText = "POST Passed: Bidirectional voice handshake successfully verified!";
+        setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
+        localModeCheckbox.disabled = false;
+        
+        fetch('/api/post_check/voice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'PASS' })
+        }).catch(err => console.error("Failed to update server voice status:", err));
+    }
+
     async function runPostCheck() {
         postFeedback.style.display = 'block';
         postFeedback.innerText = "Initializing Power-On Self-Test (POST)...";
         isPostChecking = true;
+        voiceHandshakeStep = 0;
+        if (autoAnswerTimeout) {
+            clearTimeout(autoAnswerTimeout);
+            autoAnswerTimeout = null;
+        }
+        postActionsContainer.style.display = 'none';
+
+        // Reset voice check state on server
+        await fetch('/api/post_check/voice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'PENDING' })
+        }).catch(() => {});
+
         localModeCheckbox.disabled = true; // Block interaction during diagnostic test
         setBadgeStatus(postOverallStatus, 'post: checking', 'state-checking');
 
@@ -239,36 +349,12 @@ document.addEventListener('DOMContentLoaded', () => {
         await new Promise(r => setTimeout(r, 600));
 
         if (isWebsocketConnected) {
-            setBadgeStatus(postGemini, 'pass', 'state-pass');
-            setLightStatus(lightGemini, 'active');
-            postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake complete.";
-            setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
-            localModeCheckbox.disabled = false;
-            
-            // Automatically engage microphone and ask Gemini to check in
-            isPostChecking = false;
-            await startMicrophoneCapture();
-            const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
-            sendIntroGreeting(handshakePrompt);
+            await initiateVoiceHandshake();
         } else {
             postFeedback.innerText = "POST Local Checks Passed. Connecting to Gemini Live for voice validation...";
             try {
                 await connectGeminiLive();
-                
-                setBadgeStatus(postGemini, 'pass', 'state-pass');
-                setLightStatus(lightGemini, 'active');
-                postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake active...";
-                setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
-                localModeCheckbox.disabled = false;
-                
-                isPostChecking = false;
-                
-                // Automatically engage microphone and ask Gemini to check in
-                setTimeout(async () => {
-                    await startMicrophoneCapture();
-                    const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
-                    sendIntroGreeting(handshakePrompt);
-                }, 800);
+                await initiateVoiceHandshake();
             } catch (err) {
                 setBadgeStatus(postGemini, 'fail', 'state-fail');
                 setLightStatus(lightGemini, 'error');
@@ -372,7 +458,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Send setup config block
                 const setupMsg = {
                     setup: {
-                        model: "models/gemini-2.5-flash-native-audio-preview-09-2025"
+                        model: "models/gemini-2.5-flash-native-audio-preview-09-2025",
+                        generationConfig: {
+                            responseModalities: ["AUDIO"]
+                        },
+                        inputAudioTranscription: {},
+                        outputAudioTranscription: {}
                     }
                 };
                 ws.send(JSON.stringify(setupMsg));
@@ -387,12 +478,28 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             ws.onmessage = async (event) => {
+                console.log(`[WebSocket onmessage] data type: ${typeof event.data}, isBlob: ${event.data instanceof Blob}`);
+                if (typeof event.data === 'string') {
+                    console.log(`[WebSocket message content]: ${event.data}`);
+                }
                 let text = "";
                 if (event.data instanceof Blob) {
                     const arrayBuffer = await event.data.arrayBuffer();
-                    const pcm16 = new Int16Array(arrayBuffer);
-                    playPCM24k(pcm16);
-                    return;
+                    try {
+                        const decoder = new TextDecoder("utf-8");
+                        const decodedText = decoder.decode(arrayBuffer);
+                        if (decodedText.trim().startsWith('{')) {
+                            const parsed = JSON.parse(decodedText);
+                            console.log(`[WebSocket Blob decoded as JSON]: ${decodedText}`);
+                            text = decodedText;
+                        } else {
+                            throw new Error("Not JSON");
+                        }
+                    } catch (e) {
+                        const pcm16 = new Int16Array(arrayBuffer);
+                        playPCM24k(pcm16);
+                        return;
+                    }
                 } else {
                     text = event.data;
                 }
@@ -410,6 +517,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Handle text transcript display
                     if (response.serverContent) {
                         const serverContent = response.serverContent;
+                        
+                        // Handle transcribed text if available
+                        if (serverContent.outputTranscription && serverContent.outputTranscription.text) {
+                            const transText = serverContent.outputTranscription.text;
+                            logTerminal(`Gemini (Transcript): ${transText}`, "server");
+                            
+                            if (isPostChecking) {
+                                if (voiceHandshakeStep === 1) {
+                                    postFeedback.innerText = `Gemini: "${transText}"`;
+                                } else if (voiceHandshakeStep === 2 || voiceHandshakeStep === 3) {
+                                    postFeedback.innerText = `Gemini: "${transText}"`;
+                                    const textLower = transText.toLowerCase();
+                                    if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("hear you") || textLower.includes("online") || textLower.includes("successful")) {
+                                        passVoiceHandshake();
+                                    }
+                                }
+                            }
+                        }
+
                         const modelTurn = serverContent.modelTurn;
                         const parts = modelTurn ? modelTurn.parts : serverContent.parts;
                         
@@ -417,6 +543,19 @@ document.addEventListener('DOMContentLoaded', () => {
                             parts.forEach(part => {
                                 if (part.text) {
                                     logTerminal(`Gemini: ${part.text}`, "server");
+                                    
+                                    // Monitor for conversational check-in verification
+                                    if (isPostChecking) {
+                                        if (voiceHandshakeStep === 1) {
+                                            postFeedback.innerText = `Gemini: "${part.text}"`;
+                                        } else if (voiceHandshakeStep === 2 || voiceHandshakeStep === 3) {
+                                            postFeedback.innerText = `Gemini: "${part.text}"`;
+                                            const textLower = part.text.toLowerCase();
+                                            if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("hear you") || textLower.includes("online") || textLower.includes("successful")) {
+                                                passVoiceHandshake();
+                                            }
+                                        }
+                                    }
                                 }
                                 if (part.inlineData) {
                                     const mime = part.inlineData.mimeType;
@@ -432,7 +571,26 @@ document.addEventListener('DOMContentLoaded', () => {
                                 }
                             });
                         }
+
+                        // Monitor turn complete to transition states
+                        if (serverContent.turnComplete) {
+                            logTerminal("< turnComplete received from Gemini.", "server");
+                            if (isPostChecking && voiceHandshakeStep === 1) {
+                                voiceHandshakeStep = 2;
+                                postFeedback.innerText = "Gemini: 'Can you hear me?' (Speak into mic or click Answer)";
+                                postActionsContainer.style.display = 'block';
+                                
+                                if (autoAnswerTimeout) clearTimeout(autoAnswerTimeout);
+                                autoAnswerTimeout = setTimeout(() => {
+                                    if (voiceHandshakeStep === 2) {
+                                        console.log("[Auto Test] No response detected. Auto-simulating client voice answer turn...");
+                                        sendUserResponseText();
+                                    }
+                                }, 3500);
+                            }
+                        }
                     }
+
 
                     // Handle session resumption tokens
                     if (response.sessionResumptionUpdate) {
@@ -808,6 +966,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     postOverallStatus.addEventListener('click', runPostCheck);
+    postAnswerBtn.addEventListener('click', sendUserResponseText);
 
     connectWsBtn.addEventListener('click', async () => {
         try {

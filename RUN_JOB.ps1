@@ -93,13 +93,48 @@ try {
 
 # Test 3: Check POST Check Endpoint
 try {
-    Write-Host "Testing /api/post_check endpoint..."
-    $postCheckRes = Invoke-RestMethod -Uri "http://localhost:18790/api/post_check" -Method Get -TimeoutSec 5
-    if (-not $postCheckRes) { throw "Empty /api/post_check response" }
-    Write-Host "-> /api/post_check results: Node: $($postCheckRes.nodeServer), Gateway: $($postCheckRes.gateway), Gemini API Key: $($postCheckRes.geminiApiKey), Gateway Token: $($postCheckRes.gatewayToken)" -ForegroundColor Gray
-    if ($postCheckRes.nodeServer -ne "PASS") {
-        throw "Node server check failed"
+    Write-Host "Resetting server voice check status..."
+    $resetBody = @{ status = "PENDING" } | ConvertTo-Json
+    $null = Invoke-WebRequest -Uri "http://localhost:18790/api/post_check/voice" -Method Post -Body $resetBody -ContentType "application/json" -TimeoutSec 5 -UseBasicParsing
+
+    Write-Host "Launching headless voice handshake client (run_voice_handshake.py)..."
+    $handshakeJob = Start-Job -ScriptBlock {
+        param($root)
+        Set-Location $root
+        python run_voice_handshake.py
+    } -ArgumentList $WorkspaceRoot
+
+    Write-Host "Polling /api/post_check endpoint for voice check completion (up to 35 seconds)..." -ForegroundColor Cyan
+    $pollStart = [System.Diagnostics.Stopwatch]::StartNew()
+    $voiceCheckPassed = $false
+    $voiceStatus = "PENDING"
+    
+    while ($pollStart.Elapsed.TotalSeconds -lt 35) {
+        try {
+            $postCheckRes = Invoke-RestMethod -Uri "http://localhost:18790/api/post_check" -Method Get -TimeoutSec 2
+            if ($postCheckRes) {
+                $voiceStatus = $postCheckRes.voiceCheck
+                Write-Host "-> voiceCheck status: $voiceStatus, overall: $($postCheckRes.overall)" -ForegroundColor Gray
+                if ($postCheckRes.overall -eq "PASS") {
+                    $voiceCheckPassed = $true
+                    break
+                }
+                if ($postCheckRes.overall -eq "FAIL" -or $postCheckRes.voiceCheck -eq "FAIL") {
+                    break
+                }
+            }
+        } catch {
+            Write-Host "-> Poll warning: Failed to query /api/post_check" -ForegroundColor Yellow
+        }
+        Start-Sleep -Seconds 1
     }
+    $pollStart.Stop()
+
+    if (-not $voiceCheckPassed) {
+        $handshakeLog = Receive-Job -Job $handshakeJob | Out-String
+        throw "POST Check failed to pass within timeout. Final voice status: $voiceStatus. Handshake client output details:`n$handshakeLog"
+    }
+
     $timelineEvents += @{ event = "API_POST_Check"; time = "$($startTime.ElapsedMilliseconds)ms"; status = "SUCCESS" }
 } catch {
     $failures++
