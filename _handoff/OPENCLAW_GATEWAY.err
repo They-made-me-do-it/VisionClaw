@@ -1,0 +1,2 @@
+2026-06-09T19:53:41.878-05:00 [gateway] ⚠️  Gateway is binding to a non-loopback address. Ensure authentication is configured before exposing to public networks.
+2026-06-09T19:53:42.255-05:00 [gateway] security warning: dangerous config flags enabled: tools.fs.workspaceOnly=false. Run `openclaw security audit`.
