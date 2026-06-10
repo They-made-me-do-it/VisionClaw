@@ -87,7 +87,7 @@ public class GeminiLiveService private constructor() {
         val setupPayload = JSONObject()
         val setup = JSONObject()
         // Production model ID for Multimodal Live
-        setup.put("model", "models/gemini-2.0-flash-exp")
+        setup.put("model", "models/gemini-2.5-flash-native-audio-preview-09-2025")
         setupPayload.put("setup", setup)
 
         val jsonString = setupPayload.toString()

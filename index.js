@@ -345,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 logTerminal(`Failed to initialize AudioContext: ${e.message}`, "error");
             }
 
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(apiKey)}`;
 
             try {
                 ws = new WebSocket(wsUrl);
@@ -372,11 +372,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Send setup config block
                 const setupMsg = {
                     setup: {
-                        model: "models/gemini-2.0-flash-exp"
+                        model: "models/gemini-2.5-flash-native-audio-preview-09-2025"
                     }
                 };
                 ws.send(JSON.stringify(setupMsg));
-                logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.0-flash-exp] sent.", "client");
+                logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.5-flash-native-audio-preview-09-2025] sent.", "client");
 
                 // Update UI elements
                 connectWsBtn.classList.add('hidden');
@@ -467,7 +467,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ws.onclose = (e) => {
                 clearTimeout(connTimeout);
                 handleWebsocketCleanup();
-                reject(new Error(`WebSocket closed. Code: ${e.code}.`));
+                reject(new Error(`WebSocket closed. Code: ${e.code}. Reason: ${e.reason || "None"}`));
             };
         });
     }
