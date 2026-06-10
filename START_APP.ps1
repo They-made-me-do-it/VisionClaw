@@ -190,11 +190,13 @@ try {
         # A. Monitor Node.js Dashboard Server
         $nodeHealthy = $false
         try {
-            $res = Invoke-RestMethod -Uri "http://localhost:$ServerPort/api/config" -Method Get -TimeoutSec 2
+            $res = Invoke-RestMethod -Uri "http://127.0.0.1:$ServerPort/api/config" -Method Get -TimeoutSec 2
             if ($res -and $res.PSObject.Properties.Name -contains 'geminiApiKey') {
                 $nodeHealthy = $true
             }
-        } catch {}
+        } catch {
+            Log-Warning "Node.js Server health check request failed: $($_.Exception.Message)"
+        }
 
         if (-not $nodeHealthy) {
             Log-Warning "Node.js Server is unresponsive or stopped. Attempting recovery..."

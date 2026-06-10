@@ -75,12 +75,42 @@ public class VideoPipeline {
     public var onFrameProcessed: ((String) -> Unit)? = null
 
     /**
+     * Checks if a hardware device session is currently active
+     */
+    public fun isSessionActive(): Boolean {
+        return activeSession != null
+    }
+
+    /**
+     * Checks if frames are currently flowing from the hardware
+     */
+    public fun isStreamingFlowing(): Boolean {
+        return lastFrameBytes != null && (System.currentTimeMillis() - lastSentFrameTime < 5000)
+    }
+
+    /**
      * Connects to the DAT wearable camera pipeline (SDK 0.7.0)
      */
     public fun initializeDATStream(session: DATDeviceSession, stream: DATVideoStream) {
         this.activeSession = session
         this.activeStream = stream
         System.out.println("[VideoPipeline] Initializing DAT Camera stream at resolution 504x896 (Medium) and 1 fps target directly at hardware configuration.")
+        
+        // Start simulation loop for mocks to verify diagnostic flow
+        startMockFrameGenerator()
+    }
+
+    private fun startMockFrameGenerator() {
+        executorService.submit {
+            while (activeSession != null) {
+                onFrameReceived(object : MWDatFrame {
+                    override fun getWidth(): Int = 504
+                    override fun getHeight(): Int = 896
+                    override fun toBitmap(): Bitmap = Bitmap.createBitmap(504, 896, Bitmap.Config.ARGB_8888)
+                })
+                Thread.sleep(1000)
+            }
+        }
     }
 
     /**

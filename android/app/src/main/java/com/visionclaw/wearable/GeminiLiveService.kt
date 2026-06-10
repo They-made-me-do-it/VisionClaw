@@ -19,7 +19,11 @@ public class GeminiLiveService private constructor() {
         public val shared: GeminiLiveService = GeminiLiveService()
     }
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS) // For WebSocket
+        .writeTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private var webSocket: WebSocket? = null
     
     private var apiKeyCached: String? = null
@@ -46,14 +50,17 @@ public class GeminiLiveService private constructor() {
      */
     public fun connect(apiKey: String) {
         this.apiKeyCached = apiKey
-        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey"
+        isSetupComplete = false
+        
+        // Use v1beta for production Gemini 2.0 Flash Exp Bidi support
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         val request = Request.Builder().url(url).build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                System.out.println("[GeminiLiveService] WebSocket open. Sending setup...")
+                System.out.println("[GeminiLiveService] WebSocket open. Response: $response")
                 reconnectAttempts = 0
-                sendSetupMessage()
+                mainHandler.postDelayed({ sendSetupMessage() }, 800)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -61,8 +68,6 @@ public class GeminiLiveService private constructor() {
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                // If it is binary audio data from the server, play it directly
-                // The binary frame is raw 24 kHz mono Int16 PCM audio
                 audioManager?.playAudio(bytes.toByteArray())
             }
 
@@ -78,100 +83,41 @@ public class GeminiLiveService private constructor() {
         })
     }
 
-    /**
-     * Constructs and sends the initial BidiGenerateContentSetup schema payload
-     */
     private fun sendSetupMessage() {
+        val setupPayload = JSONObject()
         val setup = JSONObject()
-        setup.put("model", "models/gemini-3.1-flash-live-preview")
+        // Production model ID for Multimodal Live
+        setup.put("model", "models/gemini-2.0-flash-exp")
+        setupPayload.put("setup", setup)
 
-        val generationConfig = JSONObject()
-        val modalities = JSONArray()
-        modalities.put("AUDIO")
-        generationConfig.put("responseModalities", modalities)
-        
-        val voiceConfig = JSONObject()
-        val prebuiltVoiceConfig = JSONObject()
-        prebuiltVoiceConfig.put("voiceName", "Puck")
-        voiceConfig.put("prebuiltVoiceConfig", prebuiltVoiceConfig)
-        
-        val speechConfig = JSONObject()
-        speechConfig.put("voiceConfig", voiceConfig)
-        generationConfig.put("speechConfig", speechConfig)
-
-        setup.put("generationConfig", generationConfig)
-
-        // Configuration to configure context window compression block to survive 2-min session limits
-        val slidingWindow = JSONObject()
-        slidingWindow.put("targetTokens", 2000)
-        val contextWindowCompression = JSONObject()
-        contextWindowCompression.put("slidingWindow", slidingWindow)
-        setup.put("contextWindowCompression", contextWindowCompression)
-
-        // Tools registration for OpenClaw
-        val tools = JSONArray()
-        val toolContainer = JSONObject()
-        val functionDeclarations = JSONArray()
-        
-        val functionDecl = JSONObject()
-        functionDecl.put("name", "execute")
-        functionDecl.put("description", "Execute local action via OpenClaw Gateway on LAN")
-        functionDecl.put("behavior", "NON_BLOCKING")
-
-        val parameters = JSONObject()
-        parameters.put("type", "OBJECT")
-        
-        val properties = JSONObject()
-        val toolNameParam = JSONObject()
-        toolNameParam.put("type", "STRING")
-        toolNameParam.put("description", "The target OpenClaw tool name, e.g., capture_photo")
-        properties.put("toolName", toolNameParam)
-        
-        val argsParam = JSONObject()
-        argsParam.put("type", "OBJECT")
-        argsParam.put("description", "JSON arguments matching tool parameters")
-        properties.put("arguments", argsParam)
-        
-        parameters.put("properties", properties)
-        
-        val required = JSONArray()
-        required.put("toolName")
-        parameters.put("required", required)
-        
-        functionDecl.put("parameters", parameters)
-        functionDeclarations.put(functionDecl)
-        toolContainer.put("functionDeclarations", functionDeclarations)
-        tools.put(toolContainer)
-        setup.put("tools", tools)
-
-        // Enable and configure session resumption
-        val sessionResumption = JSONObject()
-        lastResumptionToken?.let { token ->
-            System.out.println("[GeminiLiveService] Resuming session with token: ${token.take(8)}...")
-            sessionResumption.put("handle", token)
-            // For backward compatibility/mock checks
-            setup.put("resumptionToken", token)
-        }
-        setup.put("sessionResumption", sessionResumption)
-
-        val clientMessage = JSONObject()
-        clientMessage.put("setup", setup)
-
-        webSocket?.send(clientMessage.toString())
+        val jsonString = setupPayload.toString()
+        System.out.println("[GeminiLiveService] Sending setup JSON: $jsonString")
+        webSocket?.send(jsonString)
     }
+
+    public var isSetupComplete: Boolean = false
+        private set
 
     /**
      * Parses server response message JSON
      */
     private fun handleServerMessage(text: String) {
+        System.out.println("[GeminiLiveService] RAW: $text")
         try {
             val json = JSONObject(text)
-
-            // 1. Audio Ingestion (Gemini -> App -> Glasses)
+            
+            if (json.has("setupComplete")) {
+                System.out.println("[GeminiLiveService] Handshake COMPLETED.")
+                isSetupComplete = true
+                sendIntroductionPrompt()
+            }
+            
             if (json.has("serverContent")) {
                 val serverContent = json.getJSONObject("serverContent")
-                if (serverContent.has("parts")) {
-                    val parts = serverContent.getJSONArray("parts")
+                val modelTurn = serverContent.optJSONObject("modelTurn")
+                val parts = modelTurn?.optJSONArray("parts") ?: serverContent.optJSONArray("parts")
+                
+                if (parts != null) {
                     for (i in 0 until parts.length()) {
                         val part = parts.getJSONObject(i)
                         if (part.has("inlineData")) {
@@ -180,42 +126,27 @@ public class GeminiLiveService private constructor() {
                             if (mime.contains("audio/pcm")) {
                                 val base64Data = inlineData.getString("data")
                                 val audioBytes = Base64.decode(base64Data, Base64.DEFAULT)
-                                // Forward to output AudioManager stream (24 kHz PCM)
                                 audioManager?.playAudio(audioBytes)
-                            }
-                        }
-                        if (part.has("text")) {
-                            val txt = part.optString("text", "")
-                            if (txt.isNotEmpty()) {
-                                System.out.println("[GeminiLiveService] Transcript: $txt")
                             }
                         }
                     }
                 }
             }
 
-            // 2. Session Resumption updates
+            // Session Resumption
             if (json.has("sessionResumptionUpdate")) {
                 val resumption = json.getJSONObject("sessionResumptionUpdate")
-                val token = if (resumption.has("new_handle")) {
-                    resumption.getString("new_handle")
-                } else if (resumption.has("resumptionToken")) {
-                    resumption.getString("resumptionToken")
-                } else if (resumption.has("newHandle")) {
-                    resumption.getString("newHandle")
-                } else null
-
-                if (token != null) {
+                val token = resumption.optString("new_handle") ?: resumption.optString("resumptionToken")
+                if (token != null && token.isNotEmpty()) {
                     lastResumptionToken = token
-                    System.out.println("[GeminiLiveService] Cached session resumption token: ${lastResumptionToken?.take(10)}...")
                 }
             }
 
-            // 3. Intercept Function Calls
+            // Tool Calls
             if (json.has("toolCall")) {
                 val toolCall = json.getJSONObject("toolCall")
-                if (toolCall.has("functionCalls")) {
-                    val functionCalls = toolCall.getJSONArray("functionCalls")
+                val functionCalls = toolCall.optJSONArray("functionCalls")
+                if (functionCalls != null) {
                     for (i in 0 until functionCalls.length()) {
                         val call = functionCalls.getJSONObject(i)
                         val name = call.getString("name")
@@ -232,20 +163,14 @@ public class GeminiLiveService private constructor() {
         }
     }
 
-    /**
-     * Handles tool execution routing and circuit breaker evaluations
-     */
     private fun dispatchToolCall(args: JSONObject, callId: String) {
         val now = System.currentTimeMillis()
         if (circuitTripped) {
             if (now - circuitTrippedTime > circuitCooldownMs) {
-                // Cooldown expired
                 circuitTripped = false
                 consecutiveFailures = 0
-                System.out.println("[GeminiLiveService] Cooldown complete. Resetting circuit breaker.")
             } else {
-                System.out.println("[GeminiLiveService] Blocked tool execution: Circuit is TRIPPED.")
-                sendToolResponse(callId, null, "Tool call blocked. Circuit breaker is active.")
+                sendToolResponse(callId, null, "Tool blocked")
                 return
             }
         }
@@ -254,17 +179,14 @@ public class GeminiLiveService private constructor() {
             override fun onResponse(success: Boolean, result: String) {
                 if (success) {
                     consecutiveFailures = 0
-                    val payload = JSONObject()
-                    payload.put("result", result)
-                    sendToolResponse(callId, payload, null)
+                    val res = JSONObject()
+                    res.put("result", result)
+                    sendToolResponse(callId, res, null)
                 } else {
                     consecutiveFailures++
-                    System.err.println("[GeminiLiveService] Tool failure logged ($consecutiveFailures/$failureThreshold)")
-                    
                     if (consecutiveFailures >= failureThreshold) {
                         circuitTripped = true
                         circuitTrippedTime = System.currentTimeMillis()
-                        System.err.println("[GeminiLiveService] WARNING: Circuit breaker tripped! Halting further queries.")
                     }
                     sendToolResponse(callId, null, result)
                 }
@@ -272,76 +194,92 @@ public class GeminiLiveService private constructor() {
         })
     }
 
-    /**
-     * Sends back the response to the Gemini server client channel
-     */
-    private fun sendToolResponse(callId: String, responsePayload: JSONObject?, errorMsg: String?) {
-        val responseContainer = JSONObject()
-        responseContainer.put("id", callId)
-        responseContainer.put("name", "execute")
-        responseContainer.put("scheduling", "INTERRUPT")
-
-        if (errorMsg != null) {
+    private fun sendToolResponse(callId: String, payload: JSONObject?, error: String?) {
+        val responseObj = JSONObject()
+        responseObj.put("id", callId)
+        responseObj.put("name", "execute")
+        if (error != null) {
             val errObj = JSONObject()
-            errObj.put("error", errorMsg)
-            responseContainer.put("response", errObj)
-        } else if (responsePayload != null) {
-            responseContainer.put("response", responsePayload)
+            errObj.put("error", error)
+            responseObj.put("response", errObj)
+        } else {
+            responseObj.put("response", payload)
         }
 
-        val responses = JSONArray()
-        responses.put(responseContainer)
-
         val toolResponse = JSONObject()
-        toolResponse.put("functionResponses", responses)
+        val fr = JSONArray()
+        fr.put(responseObj)
+        toolResponse.put("functionResponses", fr)
 
         val clientMessage = JSONObject()
         clientMessage.put("toolResponse", toolResponse)
-
         webSocket?.send(clientMessage.toString())
     }
 
+    private var lastChunkLogTime = 0L
+
     /**
-     * Transmit real-time audio/video input payloads upstream
+     * Streams binary media chunks (PCM audio or JPEG images) to the API
+     * Only starts streaming AFTER handshake is confirmed.
      */
     public fun sendMediaChunk(mimeType: String, base64Data: String) {
+        if (!isSetupComplete) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastChunkLogTime > 5000) {
+            System.out.println("[GeminiLiveService] Streaming: $mimeType (${base64Data.length} bytes)")
+            lastChunkLogTime = now
+        }
+        
         val mediaChunk = JSONObject()
         mediaChunk.put("mimeType", mimeType)
         mediaChunk.put("data", base64Data)
 
+        val realtimeInput = JSONObject()
         val chunks = JSONArray()
         chunks.put(mediaChunk)
-
-        val realtimeInput = JSONObject()
         realtimeInput.put("mediaChunks", chunks)
 
         val clientMessage = JSONObject()
         clientMessage.put("realtimeInput", realtimeInput)
+        webSocket?.send(clientMessage.toString())
+    }
 
+    private fun sendIntroductionPrompt() {
+        val prompt = "VisionClaw System Handshake. Gemini, please introduce yourself and ask me for acknowledgment."
+        
+        val turn = JSONObject()
+        turn.put("role", "user")
+        val parts = JSONArray()
+        parts.put(JSONObject().put("text", prompt))
+        turn.put("parts", parts)
+        
+        val clientContent = JSONObject()
+        val turns = JSONArray()
+        turns.put(turn)
+        clientContent.put("turns", turns)
+        
+        val clientMessage = JSONObject()
+        clientMessage.put("clientContent", clientContent)
+        
+        System.out.println("[GeminiLiveService] Triggering system handshake.")
         webSocket?.send(clientMessage.toString())
     }
 
     public fun disconnect() {
         apiKeyCached = null
+        isSetupComplete = false
         webSocket?.close(1000, "User Disconnected")
         webSocket = null
         reconnectAttempts = 0
-        System.out.println("[GeminiLiveService] WebSocket manually disconnected.")
     }
 
     private fun handleDisconnect() {
         val apiKey = apiKeyCached ?: return
-        if (reconnectAttempts >= maxReconnectAttempts) {
-            System.err.println("[GeminiLiveService] Max reconnect attempts ($maxReconnectAttempts) reached. Reconnection aborted.")
-            return
-        }
+        isSetupComplete = false
+        if (reconnectAttempts >= maxReconnectAttempts) return
         val delay = Math.min(baseDelayMs * (1L shl reconnectAttempts), maxDelayMs)
         reconnectAttempts++
-        System.out.println("[GeminiLiveService] Reconnecting in $delay ms (Attempt $reconnectAttempts/$maxReconnectAttempts)...")
-        mainHandler.postDelayed({
-            if (apiKeyCached != null) {
-                connect(apiKeyCached!!)
-            }
-        }, delay)
+        mainHandler.postDelayed({ if (apiKeyCached != null) connect(apiKeyCached!!) }, delay)
     }
 }

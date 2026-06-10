@@ -33,7 +33,7 @@ public class OpenClawToolRouter private constructor() {
     private val backgroundExecutor: ExecutorService = Executors.newFixedThreadPool(2)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    public var gatewayIP: String = "192.168.1.100" // Example LAN IP
+    public var gatewayIP: String = "127.0.0.1"
     public var gatewayPort: Int = 18789
     public var bearerToken: String = "oc_live_token_7a9c8b3d2e1f0"
     public var targetSandbox: Boolean = false

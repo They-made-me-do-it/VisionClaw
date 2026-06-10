@@ -355,13 +355,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            // Connection phase timeout (10 seconds)
+            // Connection & Handshake timeout (10 seconds)
             const connTimeout = setTimeout(() => {
-                if (ws && ws.readyState !== WebSocket.OPEN) {
-                    logTerminal("Gemini Live WebSocket connection timed out.", "error");
-                    try { ws.close(); } catch(err) {}
-                    reject(new Error("Connection timed out waiting for setup handshake."));
-                }
+                logTerminal("Gemini Live WebSocket connection/handshake timed out.", "error");
+                try { ws.close(); } catch(err) {}
+                reject(new Error("Connection/handshake timed out waiting for setupComplete."));
             }, 10000);
 
             ws.onopen = () => {

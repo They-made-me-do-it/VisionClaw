@@ -15,27 +15,35 @@ import android.media.AudioFormat
 import android.media.AudioManager as AndroidAudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
+import android.media.AudioDeviceInfo
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONObject
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 
 public class AudioManager(private val context: Context) {
     private val androidAudioManager = context.getSystemService(Context.AUDIO_SERVICE) as AndroidAudioManager
-    private val executorService: ExecutorService = Executors.newSingleThreadExecutor()
-    
+    private val executorService: ExecutorService = Executors.newFixedThreadPool(3)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
-    private var isRecording = false
+    public var isRecording: Boolean = false
+        private set
 
     private val audioQueue = LinkedBlockingQueue<ByteArray>()
-    @Volatile
-    private var isPlaybackActive = false
+    public var isPlaybackActive: Boolean = false
+        private set
     private var playbackThread: Thread? = null
 
     private var isReceiverRegistered = false
+
+    public var isScoConnected: Boolean = false
+        private set
 
     private val scoReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -43,9 +51,11 @@ public class AudioManager(private val context: Context) {
             System.out.println("[AudioManager] SCO Audio State updated: $state")
             if (state == AndroidAudioManager.SCO_AUDIO_STATE_CONNECTED) {
                 System.out.println("[AudioManager] Bluetooth SCO link connected. Activating routing.")
+                isScoConnected = true
                 androidAudioManager.isBluetoothScoOn = true
-                androidAudioManager.mode = AndroidAudioManager.MODE_IN_COMMUNICATION
+                androidAudioManager.mode = AndroidAudioManager.MODE_IN_CALL
             } else if (state == AndroidAudioManager.SCO_AUDIO_STATE_DISCONNECTED) {
+                isScoConnected = false
                 System.out.println("[AudioManager] Bluetooth SCO link disconnected.")
             }
         }
@@ -53,10 +63,7 @@ public class AudioManager(private val context: Context) {
 
     private fun registerScoReceiver() {
         if (!isReceiverRegistered) {
-            context.registerReceiver(
-                scoReceiver,
-                IntentFilter(AndroidAudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
-            )
+            context.registerReceiver(scoReceiver, IntentFilter(AndroidAudioManager.ACTION_SCO_AUDIO_STATE_UPDATED))
             isReceiverRegistered = true
         }
     }
@@ -71,52 +78,39 @@ public class AudioManager(private val context: Context) {
     }
 
     private fun startPlaybackLoop() {
+        if (isPlaybackActive) return
         isPlaybackActive = true
-        audioQueue.clear()
         playbackThread = Thread {
             while (isPlaybackActive) {
                 try {
-                    val chunk = audioQueue.poll(500, TimeUnit.MILLISECONDS)
-                    if (chunk != null) {
-                        audioTrack?.let { track ->
-                            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                                track.write(chunk, 0, chunk.size)
-                            }
-                        }
-                    }
+                    val chunk = audioQueue.take()
+                    audioTrack?.write(chunk, 0, chunk.size)
                 } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
                     break
                 }
             }
-        }.apply {
-            name = "AudioPlaybackPacingThread"
-            priority = Thread.MAX_PRIORITY
-            start()
         }
+        playbackThread?.start()
     }
 
     private fun stopPlaybackLoop() {
         isPlaybackActive = false
         playbackThread?.interrupt()
         playbackThread = null
-        audioQueue.clear()
     }
-    
-    // Config: 100 ms chunks at 16 kHz Mono Int16 = 1600 samples = 3200 bytes
-    private val sampleRateInput = 16000
-    private val bytesPerChunk = 3200 
-    
-    // Config: 24 kHz Mono Int16 Output
-    private val sampleRateOutput = 24000
 
+    private val sampleRateInput = 16000 // 16 kHz mono Int16 PCM for Gemini Live
+    private val bytesPerChunk = 3200 // 100 ms of 16 kHz Int16 PCM (2 bytes per sample)
+
+    private val sampleRateOutput = 24000 // 24 kHz mono Int16 PCM from Gemini Live
+    
     private var focusRequest: Any? = null
 
     private val audioFocusChangeListener = AndroidAudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
-            AndroidAudioManager.AUDIOFOCUS_LOSS,
-            AndroidAudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                System.out.println("[AudioManager] Audio focus lost, stopping capture.")
+            AndroidAudioManager.AUDIOFOCUS_LOSS, 
+            AndroidAudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AndroidAudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 stopRecording()
             }
         }
@@ -173,10 +167,49 @@ public class AudioManager(private val context: Context) {
      */
     public fun configureBluetoothSCO() {
         registerScoReceiver()
+        
+        // Priority 1: Modern setCommunicationDevice (Android 12+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val devices = androidAudioManager.availableCommunicationDevices
+            val scoDevice = devices.find { 
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || 
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP 
+            }
+            if (scoDevice != null) {
+                val result = androidAudioManager.setCommunicationDevice(scoDevice)
+                System.out.println("[AudioManager] Requested communication device: ${scoDevice.productName}, Result: $result")
+            }
+        }
+        
+        // Priority 2: Classic startBluetoothSco
+        System.out.println("[AudioManager] Requesting startBluetoothSco()...")
         androidAudioManager.startBluetoothSco()
-        androidAudioManager.isBluetoothScoOn = true
-        androidAudioManager.mode = AndroidAudioManager.MODE_IN_COMMUNICATION
-        System.out.println("[AudioManager] Bluetooth SCO audio routing requested, mode IN_COMMUNICATION set, and SCO receiver registered.")
+        
+        // Wait briefly for hardware handshake before forcing flag and mode
+        mainHandler.postDelayed({
+            androidAudioManager.isBluetoothScoOn = true
+            androidAudioManager.mode = AndroidAudioManager.MODE_IN_CALL
+            System.out.println("[AudioManager] Forced isBluetoothScoOn=true and mode=MODE_IN_CALL after delay.")
+        }, 500)
+    }
+
+    /**
+     * Returns a detailed report of the current audio hardware state
+     */
+    public fun getHardwareReport(): JSONObject {
+        val report = JSONObject()
+        report.put("isRecording", isRecording)
+        report.put("isScoRequested", androidAudioManager.isBluetoothScoOn)
+        report.put("isScoConnected", isScoConnected)
+        report.put("audioMode", androidAudioManager.mode)
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val device = androidAudioManager.communicationDevice
+            report.put("commDevice", device?.productName ?: "none")
+            report.put("commDeviceType", device?.type ?: -1)
+        }
+        
+        return report
     }
 
     /**
@@ -216,6 +249,7 @@ public class AudioManager(private val context: Context) {
         val trackBufferSize = Math.max(trackMinBufferSize, 64 * 1024)
 
         // Initialize AudioTrack for playing downstream Gemini Live audio
+        @Suppress("DEPRECATION")
         audioTrack = AudioTrack(
             AndroidAudioManager.STREAM_VOICE_CALL,
             sampleRateOutput,
@@ -243,29 +277,40 @@ public class AudioManager(private val context: Context) {
                 }
             }
         }
-        System.out.println("[AudioManager] Audio capture and playback loops initialized.")
         return true
     }
 
     /**
-     * Stops audio capturing and releases hardware resources.
+     * Stops audio recording and playback, releasing hardware resources.
      */
     public fun stopRecording() {
         if (!isRecording) return
         isRecording = false
+        
         stopPlaybackLoop()
         
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+            audioRecord = null
+            
+            audioTrack?.stop()
+            audioTrack?.release()
+            audioTrack = null
+        } catch (e: Exception) {
+            System.err.println("[AudioManager] Error releasing hardware: ${e.message}")
+        }
         
-        audioTrack?.stop()
-        audioTrack?.release()
-        audioTrack = null
-        
-        androidAudioManager.stopBluetoothSco()
         androidAudioManager.isBluetoothScoOn = false
+        androidAudioManager.stopBluetoothSco()
         androidAudioManager.mode = AndroidAudioManager.MODE_NORMAL
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Clearing preferred communication device
+            @Suppress("UNUSED_VARIABLE")
+            val cleared = androidAudioManager.clearCommunicationDevice()
+        }
+        
         unregisterScoReceiver()
         abandonAudioFocus()
         
@@ -273,9 +318,11 @@ public class AudioManager(private val context: Context) {
     }
 
     /**
-     * Plays 24 kHz 16-bit little-endian monaural PCM chunks arriving from the Gemini Live server
+     * Enqueues binary PCM audio chunks for paced playback.
      */
-    public fun playAudio(chunk: ByteArray) {
-        audioQueue.offer(chunk)
+    public fun playAudio(pcmChunk: ByteArray) {
+        if (isRecording && isPlaybackActive) {
+            audioQueue.offer(pcmChunk)
+        }
     }
 }

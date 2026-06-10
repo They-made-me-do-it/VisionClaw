@@ -6,17 +6,17 @@
                        "event":  "Integration_Test_Start"
                    },
                    {
-                       "time":  "2100ms",
+                       "time":  "2078ms",
                        "status":  "SUCCESS",
                        "event":  "API_Config_Check"
                    },
                    {
-                       "time":  "2150ms",
+                       "time":  "2136ms",
                        "status":  "SUCCESS",
                        "event":  "Tool_Invoke_Ping"
                    },
                    {
-                       "time":  "2159ms",
+                       "time":  "2142ms",
                        "status":  "SUCCESS",
                        "event":  "API_POST_Check"
                    }

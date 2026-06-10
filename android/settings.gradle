@@ -19,8 +19,8 @@ dependencyResolutionManagement {
         maven {
             url "https://maven.pkg.github.com/jgeis/VisionClaw"
             credentials {
-                username = settings.providers.gradleProperty("gpr.user").orNull() ?: System.getenv("GPR_USER") ?: "jgeis"
-                password = settings.providers.gradleProperty("gpr.token").orNull() ?: System.getenv("GPR_TOKEN")
+                username = System.getenv("GITHUB_ACTOR") ?: "jgeis"
+                password = System.getenv("GITHUB_TOKEN") ?: ""
             }
         }
     }
