@@ -138,6 +138,11 @@ powershell -ExecutionPolicy Bypass .\START_APP.ps1
 ```
 The dashboard will open automatically in your browser at `http://localhost:18790`. It communicates with the official OpenClaw gateway on port `18789`.
 
+*Note: You can pass the `-NoBrowser` switch to launch the services (Node.js dashboard backend, OpenClaw gateway, and local WebSocket proxy) in the background without automatically opening a browser window:*
+```powershell
+powershell -ExecutionPolicy Bypass .\START_APP.ps1 -NoBrowser
+```
+
 ### 4. Run the Pipeline Simulation
 Validate that all required files and telemetry logs exist and are verified:
 ```powershell

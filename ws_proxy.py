@@ -50,11 +50,12 @@ async def handler(websocket):
         except Exception:
             pass
             
-        # 3. Cancel the handler task of the previous session
+        # 3. Cancel the handler task of the previous session and wait for it to terminate
         if prev_session.get('task') and prev_session['task'] != current_task:
             try:
                 prev_session['task'].cancel()
-            except Exception:
+                await prev_session['task']
+            except (asyncio.CancelledError, Exception):
                 pass
                 
     session_info = {

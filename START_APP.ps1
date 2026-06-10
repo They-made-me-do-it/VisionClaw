@@ -1,6 +1,10 @@
 # START_APP.ps1
 # Startup script for VisionClaw OpenClaw Gateway and mobile client configurations
 
+param (
+    [switch]$NoBrowser
+)
+
 $ErrorActionPreference = "Continue"
 $HandoffDir = Join-Path $PSScriptRoot "_handoff"
 $LogPath = Join-Path $HandoffDir "LAST_RUN.log"
@@ -184,8 +188,12 @@ if ($nodeProcess.HasExited) {
 }
 
 Log-Message "Dashboard Server active at: http://localhost:$ServerPort"
-Log-Message "Opening Dashboard in default web browser..."
-Start-Process "http://localhost:$ServerPort"
+if (-not $NoBrowser) {
+    Log-Message "Opening Dashboard in default web browser..."
+    Start-Process "http://localhost:$ServerPort"
+} else {
+    Log-Message "Skipping default web browser launch (-NoBrowser active)."
+}
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor Cyan
 Write-Host "VisionClaw Edge Gateway & Dashboard Active!" -ForegroundColor Cyan

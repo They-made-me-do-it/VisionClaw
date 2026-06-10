@@ -101,7 +101,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let diagnosticInterval = null;
     let isPostChecking = false;
     let voiceHandshakeStep = 0; // 0=idle, 1=connected (waiting for Gemini Turn 1 ask), 2=Gemini asked (waiting for user answer), 3=User answered (waiting for Gemini confirm), 4=Passed
-    let autoAnswerTimeout = null;
     let activeAudioNodes = [];
     let currentGeminiResponseText = "";
 
@@ -172,10 +171,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function sendUserResponseText() {
-        if (autoAnswerTimeout) {
-            clearTimeout(autoAnswerTimeout);
-            autoAnswerTimeout = null;
-        }
         postActionsContainer.style.display = 'none';
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         
@@ -200,10 +195,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function passVoiceHandshake() {
-        if (autoAnswerTimeout) {
-            clearTimeout(autoAnswerTimeout);
-            autoAnswerTimeout = null;
-        }
         postActionsContainer.style.display = 'none';
         voiceHandshakeStep = 4;
         isPostChecking = false;
@@ -231,10 +222,6 @@ document.addEventListener('DOMContentLoaded', () => {
         postFeedback.innerText = "Initializing Power-On Self-Test (POST)...";
         isPostChecking = true;
         voiceHandshakeStep = 0;
-        if (autoAnswerTimeout) {
-            clearTimeout(autoAnswerTimeout);
-            autoAnswerTimeout = null;
-        }
         postActionsContainer.style.display = 'none';
 
         // Reset voice check state on server
@@ -648,14 +635,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                 voiceHandshakeStep = 2;
                                 postFeedback.innerText = "Gemini: 'Can you hear me?' (Speak into mic or click Answer)";
                                 postActionsContainer.style.display = 'block';
-                                
-                                if (autoAnswerTimeout) clearTimeout(autoAnswerTimeout);
-                                autoAnswerTimeout = setTimeout(() => {
-                                    if (voiceHandshakeStep === 2) {
-                                        console.log("[Auto Test] No response detected. Auto-simulating client voice answer turn...");
-                                        sendUserResponseText();
-                                    }
-                                }, 3500);
                             }
                         }
                     }
