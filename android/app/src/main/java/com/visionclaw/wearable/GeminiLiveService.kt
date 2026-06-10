@@ -52,6 +52,17 @@ public class GeminiLiveService private constructor() {
         this.apiKeyCached = apiKey
         isSetupComplete = false
         
+        // Close existing active WebSocket connection to prevent duplicate concurrent sessions
+        webSocket?.let {
+            System.out.println("[GeminiLiveService] Closing existing active WebSocket before connecting...")
+            try {
+                it.close(1000, "Clean takeover")
+            } catch (e: Exception) {
+                System.err.println("[GeminiLiveService] Error closing existing socket: ${e.message}")
+            }
+        }
+        webSocket = null
+
         // Use v1beta for production Gemini 2.0 Flash Exp Bidi support
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
         val request = Request.Builder().url(url).build()

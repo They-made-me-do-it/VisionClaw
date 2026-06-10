@@ -46,6 +46,18 @@ public class GeminiLiveService private constructor() {
      */
     public fun connect(apiKey: String) {
         this.apiKeyCached = apiKey
+        
+        // Close existing active WebSocket connection to prevent duplicate concurrent sessions
+        webSocket?.let {
+            System.out.println("[GeminiLiveService] Closing existing active WebSocket before connecting...")
+            try {
+                it.close(1000, "Clean takeover")
+            } catch (e: Exception) {
+                System.err.println("[GeminiLiveService] Error closing existing socket: ${e.message}")
+            }
+        }
+        webSocket = null
+
         val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=$apiKey"
         val request = Request.Builder().url(url).build()
 

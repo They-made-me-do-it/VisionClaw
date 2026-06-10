@@ -458,6 +458,19 @@ document.addEventListener('DOMContentLoaded', () => {
             // Connect via our local WebSocket proxy on port 18791 to bypass browser Origin-based key checks (Code 1008)
             const wsUrl = `ws://localhost:18791?key=${encodeURIComponent(apiKey)}`;
 
+            // Close existing active WebSocket and unregister handlers to prevent duplicate sessions
+            if (ws) {
+                logTerminal("Closing existing active WebSocket before opening a new connection...", "system");
+                try {
+                    ws.onopen = null;
+                    ws.onmessage = null;
+                    ws.onerror = null;
+                    ws.onclose = null;
+                    ws.close();
+                } catch(e) {}
+                ws = null;
+            }
+
             try {
                 ws = new WebSocket(wsUrl);
             } catch(e) {

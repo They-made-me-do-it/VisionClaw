@@ -112,12 +112,14 @@ async def handler(websocket):
             task_google = asyncio.create_task(forward_to_google())
             task_browser = asyncio.create_task(forward_to_browser())
             
-            done, pending = await asyncio.wait(
-                [task_google, task_browser],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
+            try:
+                done, pending = await asyncio.wait(
+                    [task_google, task_browser],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                task_google.cancel()
+                task_browser.cancel()
                 
     except asyncio.CancelledError:
         print("[Proxy] Connection handler cancelled due to session takeover.", flush=True)
@@ -129,7 +131,6 @@ async def handler(websocket):
         except Exception:
             pass
     finally:
-        global active_session
         if active_session == session_info:
             active_session = None
         print("[Proxy] Connection session terminated.", flush=True)
