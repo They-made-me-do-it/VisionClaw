@@ -120,7 +120,7 @@ graph TD
 ## 🛠️ Get Started
 
 ### 1. System Requirements & Verification
-Run the system check to verify Node.js, Python, and the Android SDK are correctly configured on your environment:
+Run the system check to verify Node.js, Python, the Android SDK, and your live Gemini API Key (by querying Google's endpoint) are correctly configured:
 ```powershell
 powershell -ExecutionPolicy Bypass .\VERIFY_SYSTEM.ps1
 ```
@@ -143,6 +143,13 @@ Validate that all required files and telemetry logs exist and are verified:
 ```powershell
 powershell -ExecutionPolicy Bypass .\RUN_JOB.ps1
 ```
+
+### 5. Run Active Live WebSocket Voice Handshake Test
+Test that the secure WebSocket connection connects to Gemini Live, performs the setup handshake, and streams audio response chunks back successfully:
+```powershell
+python live_voice_test.py
+```
+
 
 ---
 

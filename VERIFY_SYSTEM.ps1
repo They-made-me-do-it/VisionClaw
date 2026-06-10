@@ -82,6 +82,47 @@ if ($LASTEXITCODE -eq 0) {
     $failReasons += "OpenClaw CLI is missing or not added to PATH. Install it via npm: npm install -g openclaw"
     $envSnapshot += "OpenClaw CLI: Not Found"
 }
+# 5. Check Gemini API Key
+$GeminiKey = ""
+if (Test-Path "$PSScriptRoot\.env") {
+    $envContent = Get-Content "$PSScriptRoot\.env" -Encoding UTF8
+    foreach ($line in $envContent) {
+        if ($line -match "^GEMINI_API_KEY=(.*)$") {
+            $GeminiKey = $Matches[1].Trim()
+            if ($GeminiKey.StartsWith('"') -and $GeminiKey.EndsWith('"')) {
+                $GeminiKey = $GeminiKey.Substring(1, $GeminiKey.Length - 2)
+            }
+            if ($GeminiKey.StartsWith("'") -and $GeminiKey.EndsWith("'")) {
+                $GeminiKey = $GeminiKey.Substring(1, $GeminiKey.Length - 2)
+            }
+        }
+    }
+}
+
+if (-not $GeminiKey) {
+    $GeminiKey = $env:GEMINI_API_KEY
+}
+
+if (-not $GeminiKey) {
+    $allPassed = $false
+    $failReasons += "GEMINI_API_KEY is missing. Please define it in D:\Meta\.env."
+    $envSnapshot += "Gemini API Key: Missing"
+} else {
+    $displayKey = $GeminiKey.Substring(0, [Math]::Min(10, $GeminiKey.Length))
+    $envSnapshot += "Gemini API Key: Found ($displayKey...)"
+    
+    # Run API validation check by calling models endpoint
+    $Url = "https://generativelanguage.googleapis.com/v1beta/models?key=$GeminiKey"
+    try {
+        $check = Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 5
+        $envSnapshot += "Gemini API Key Validation: Success (Key is active)"
+    } catch {
+        $allPassed = $false
+        $failReasons += "GEMINI_API_KEY verification failed. Response status: $_. Check that your key is active and not disabled."
+        $envSnapshot += "Gemini API Key Validation: Failed"
+    }
+}
+
 
 
 # Write environment snapshot to handoff directory
