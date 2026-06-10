@@ -210,6 +210,73 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // 3d. API: Append Transcript / Save Images
+    if (req.method === 'POST' && req.url === '/api/transcript') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                const timestamp = payload.timestamp || new Date().toISOString();
+                const sender = payload.sender; // "user" or "gemini"
+                const type = payload.type;     // "text", "audio_transcription", "image"
+                const content = payload.content; // text content or base64 image data
+                
+                const handoffDir = path.join(__dirname, '_handoff');
+                if (!fs.existsSync(handoffDir)) fs.mkdirSync(handoffDir, { recursive: true });
+                
+                let transcriptEntry = { timestamp, sender, type };
+                
+                if (type === 'image') {
+                    // Save image separately in assets/
+                    const assetsDir = path.join(__dirname, 'assets');
+                    if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+                    
+                    // Create clean file-safe timestamp string
+                    const safeTime = timestamp.replace(/[:.]/g, '-');
+                    const filename = `frame_${safeTime}.jpg`;
+                    const filepath = path.join(assetsDir, filename);
+                    
+                    const buffer = Buffer.from(content, 'base64');
+                    fs.writeFileSync(filepath, buffer);
+                    console.log(`[Transcript] Saved streamed frame to: ${filepath}`);
+                    
+                    transcriptEntry.imageFile = filename;
+                } else {
+                    transcriptEntry.text = content;
+                }
+                
+                // 1. Save to JSONL file
+                const jsonlPath = path.join(handoffDir, 'transcript.jsonl');
+                fs.appendFileSync(jsonlPath, JSON.stringify(transcriptEntry) + '\n');
+                
+                // 2. Append to Markdown file (TRANSCRIPT.md)
+                const mdPath = path.join(handoffDir, 'TRANSCRIPT.md');
+                let mdLine = '';
+                if (!fs.existsSync(mdPath)) {
+                    fs.writeFileSync(mdPath, `# VisionClaw Multimodal Conversation Transcript\n\nGenerated on: ${new Date().toLocaleDateString()}\n\n---\n\n`);
+                }
+                
+                const timeStr = new Date(timestamp).toLocaleTimeString();
+                if (type === 'image') {
+                    mdLine = `**[${timeStr}] User (Camera Frame)**:\n\n![Camera Frame](../assets/${transcriptEntry.imageFile})\n\n---\n\n`;
+                } else {
+                    const senderLabel = sender === 'user' ? 'User' : 'Gemini';
+                    mdLine = `**[${timeStr}] ${senderLabel}**: ${content}\n\n---\n\n`;
+                }
+                fs.appendFileSync(mdPath, mdLine);
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'OK', entry: transcriptEntry }));
+            } catch (e) {
+                console.error("[Transcript Error]", e);
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
     // 4. API: Tool Invoke Proxy
     if (req.method === 'POST' && req.url === '/tools/invoke') {
         let body = '';

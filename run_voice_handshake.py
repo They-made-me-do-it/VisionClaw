@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import urllib.request
+import datetime
 
 def load_api_key():
     if os.path.exists('.env'):
@@ -34,6 +35,21 @@ def report_status(status):
     except Exception as e:
         print(f"[Python Handshake Error] Failed to report status '{status}' to Node server: {e}")
 
+def save_transcript(sender, type_val, content):
+    url = "http://localhost:18790/api/transcript"
+    data = json.dumps({
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "sender": sender,
+        "type": type_val,
+        "content": content
+    }).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=3) as response:
+            pass
+    except Exception as e:
+        print(f"[Python Handshake Log Error] Failed to log transcript: {e}")
+
 async def main():
     api_key = load_api_key()
     if not api_key:
@@ -54,6 +70,13 @@ async def main():
                     "model": model,
                     "generationConfig": {
                         "responseModalities": ["AUDIO"]
+                    },
+                    "systemInstruction": {
+                        "parts": [
+                            {
+                                "text": "You are a concise, helpful real-time voice assistant for the VisionClaw wearable device. Speak naturally, keep responses extremely brief and conversational, and do not use markdown formatting or list thoughts. Directly answer the user without conversational filler or prefaces."
+                            }
+                        ]
                     },
                     "inputAudioTranscription": {},
                     "outputAudioTranscription": {}
@@ -89,12 +112,14 @@ async def main():
                 }
             }
             await ws.send(json.dumps(client_msg))
+            save_transcript("user", "text", turn1_prompt)
 
             print("[Python Handshake] Listening for Gemini Turn 1 ask...")
             
             # Receive loop for Turn 1
             turn1_complete = False
             start_time = asyncio.get_event_loop().time()
+            turn1_text = ""
             
             while not turn1_complete and (asyncio.get_event_loop().time() - start_time < 15.0):
                 try:
@@ -131,10 +156,20 @@ async def main():
                     text_val = server_content["outputTranscription"].get("text", "")
                     if text_val:
                         print(f"[Python Handshake] Gemini Turn 1 output transcription: '{text_val}'")
+                        turn1_text += text_val
                 
+                # Check parts
+                model_turn = server_content.get("modelTurn", {})
+                parts = model_turn.get("parts", server_content.get("parts", []))
+                for part in parts:
+                    if "text" in part:
+                        turn1_text += part["text"]
+
                 # Check for either turnComplete or generationComplete to end Turn 1
                 if ("turnComplete" in server_content and server_content["turnComplete"]) or ("generationComplete" in server_content and server_content["generationComplete"]):
                     print("[Python Handshake] Gemini Turn 1 completed speaking. Transitioning to Turn 2.")
+                    if turn1_text:
+                        save_transcript("gemini", "text", turn1_text)
                     turn1_complete = True
                     break
 
@@ -161,6 +196,7 @@ async def main():
                 }
             }
             await ws.send(json.dumps(response_msg))
+            save_transcript("user", "text", turn2_response)
 
             print("[Python Handshake] Listening for Gemini Turn 2 confirmation...")
             
@@ -220,6 +256,8 @@ async def main():
                 full_text = " ".join(transcripts)
                 if any(word in full_text for word in ["verified", "operational", "working", "hear you", "online", "success"]):
                     print("[Python Handshake] SUCCESS: Gemini confirmed link is verified and operational!")
+                    if not confirmed:
+                        save_transcript("gemini", "text", trans_text or full_text)
                     confirmed = True
                     
                 if "turnComplete" in server_content and server_content["turnComplete"]:

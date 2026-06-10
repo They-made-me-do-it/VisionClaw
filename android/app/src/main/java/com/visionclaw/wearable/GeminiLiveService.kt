@@ -88,6 +88,15 @@ public class GeminiLiveService private constructor() {
         val setup = JSONObject()
         // Production model ID for Multimodal Live
         setup.put("model", "models/gemini-2.5-flash-native-audio-preview-09-2025")
+        
+        val systemInstruction = JSONObject()
+        val parts = JSONArray()
+        val partObj = JSONObject()
+        partObj.put("text", "You are a concise, helpful real-time voice assistant for the VisionClaw wearable device. Speak naturally, keep responses extremely brief and conversational, and do not use markdown formatting or list thoughts. Directly answer the user without conversational filler or prefaces.")
+        parts.put(partObj)
+        systemInstruction.put("parts", parts)
+        setup.put("systemInstruction", systemInstruction)
+        
         setupPayload.put("setup", setup)
 
         val jsonString = setupPayload.toString()

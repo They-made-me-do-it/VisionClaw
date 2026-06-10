@@ -26,7 +26,44 @@ def load_api_key():
                         return val
     return os.environ.get('GEMINI_API_KEY')
 
+active_session = None
+
 async def handler(websocket):
+    global active_session
+    current_task = asyncio.current_task()
+    
+    if active_session is not None:
+        print("[Proxy] Closing existing active session to allow new session takeover...", flush=True)
+        prev_session = active_session
+        active_session = None
+        
+        # 1. Close Google WS first to disconnect Google Gemini instantly
+        if prev_session.get('google_ws'):
+            try:
+                asyncio.create_task(prev_session['google_ws'].close())
+            except Exception:
+                pass
+                
+        # 2. Close client websocket with 1008 takeover code
+        try:
+            asyncio.create_task(prev_session['websocket'].close(1008, "New session takeover"))
+        except Exception:
+            pass
+            
+        # 3. Cancel the handler task of the previous session
+        if prev_session.get('task') and prev_session['task'] != current_task:
+            try:
+                prev_session['task'].cancel()
+            except Exception:
+                pass
+                
+    session_info = {
+        'websocket': websocket,
+        'google_ws': None,
+        'task': current_task
+    }
+    active_session = session_info
+
     # Parse API key from query params or fall back to .env
     try:
         path = websocket.request.path
@@ -51,6 +88,7 @@ async def handler(websocket):
     try:
         # Connect to Google. This backend request will not include the browser Origin header.
         async with websockets.connect(google_url) as google_ws:
+            session_info['google_ws'] = google_ws
             print("[Proxy] Handshake established with Google. Relaying traffic bidirectionally...", flush=True)
             
             async def forward_to_google():
@@ -59,6 +97,8 @@ async def handler(websocket):
                         await google_ws.send(message)
                 except websockets.exceptions.ConnectionClosed:
                     pass
+                except asyncio.CancelledError:
+                    pass
                     
             async def forward_to_browser():
                 try:
@@ -66,9 +106,22 @@ async def handler(websocket):
                         await websocket.send(message)
                 except websockets.exceptions.ConnectionClosed:
                     pass
+                except asyncio.CancelledError:
+                    pass
                     
-            await asyncio.gather(forward_to_google(), forward_to_browser())
+            task_google = asyncio.create_task(forward_to_google())
+            task_browser = asyncio.create_task(forward_to_browser())
             
+            done, pending = await asyncio.wait(
+                [task_google, task_browser],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+                
+    except asyncio.CancelledError:
+        print("[Proxy] Connection handler cancelled due to session takeover.", flush=True)
+        raise
     except Exception as e:
         print(f"[Proxy Exception] Error connecting to Google or forwarding traffic: {e}", flush=True)
         try:
@@ -76,6 +129,9 @@ async def handler(websocket):
         except Exception:
             pass
     finally:
+        global active_session
+        if active_session == session_info:
+            active_session = None
         print("[Proxy] Connection session terminated.", flush=True)
 
 async def main():

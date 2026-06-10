@@ -56,7 +56,7 @@ async def main():
                 return
 
             # Send the voice check prompt
-            prompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active."
+            prompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you. Stop speaking immediately after asking, wait for their voice response, and if you can hear them back, confirm to them that our two-way audio link is verified and fully operational."
             print(f"Sending client turn content: '{prompt}'")
             
             client_msg = {

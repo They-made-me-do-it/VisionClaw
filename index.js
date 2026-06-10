@@ -91,6 +91,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let processorNode = null;
     let nextAudioPlayTime = 0;
     let cameraStream = null;
+    let activeVideoElement = null;
+    let offscreenCanvas = null;
+    let offscreenCtx = null;
     let frameCount = 0;
     let audioInputReady = false;
     let isRecordingAudio = false;
@@ -99,6 +102,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPostChecking = false;
     let voiceHandshakeStep = 0; // 0=idle, 1=connected (waiting for Gemini Turn 1 ask), 2=Gemini asked (waiting for user answer), 3=User answered (waiting for Gemini confirm), 4=Passed
     let autoAnswerTimeout = null;
+    let activeAudioNodes = [];
+    let currentGeminiResponseText = "";
 
     // Metrics Counter
     let metricInvocations = 0;
@@ -124,6 +129,19 @@ document.addEventListener('DOMContentLoaded', () => {
         line.innerText = message;
         clawLogsEl.appendChild(line);
         clawLogsEl.scrollTop = clawLogsEl.scrollHeight;
+    }
+
+    function saveTranscript(sender, type, content) {
+        fetch('/api/transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                timestamp: new Date().toISOString(),
+                sender,
+                type,
+                content
+            })
+        }).catch(() => {});
     }
 
     function setLightStatus(el, status) {
@@ -176,6 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
         ws.send(JSON.stringify(userTurn));
+        saveTranscript("user", "text", responsePrompt);
         voiceHandshakeStep = 3;
         postFeedback.innerText = "Sent response. Waiting for Gemini confirmation...";
     }
@@ -200,6 +219,11 @@ document.addEventListener('DOMContentLoaded', () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'PASS' })
         }).catch(err => console.error("Failed to update server voice status:", err));
+
+        // In Wearable Link mode, disconnect the browser connection so it doesn't run concurrently with S25 phone Gemini session.
+        if (!isLocalMode) {
+            disconnectGeminiLive();
+        }
     }
 
     async function runPostCheck() {
@@ -463,6 +487,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         generationConfig: {
                             responseModalities: ["AUDIO"]
                         },
+                        systemInstruction: {
+                            parts: [
+                                {
+                                    text: "You are a concise, helpful real-time voice assistant for the VisionClaw wearable device. Speak naturally, keep responses extremely brief and conversational, and do not use markdown formatting or list thoughts. Directly answer the user without conversational filler or prefaces."
+                                }
+                            ]
+                        },
                         inputAudioTranscription: {},
                         outputAudioTranscription: {}
                     }
@@ -519,6 +550,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (response.serverContent) {
                         const serverContent = response.serverContent;
                         
+                        if (serverContent.interrupted) {
+                            interruptAudioPlayback();
+                            logTerminal("< Interrupted event received from Gemini.", "system");
+                            if (currentGeminiResponseText) {
+                                saveTranscript("gemini", "text", currentGeminiResponseText + " [INTERRUPTED]");
+                                currentGeminiResponseText = "";
+                            }
+                        }
+                        
+                        // Capture User Speech Transcription
+                        if (serverContent.userTurn && serverContent.userTurn.parts) {
+                            serverContent.userTurn.parts.forEach(part => {
+                                if (part.text) {
+                                    logTerminal(`User (Audio Transcript): ${part.text}`, "client");
+                                    saveTranscript("user", "audio_transcription", part.text);
+                                }
+                            });
+                        }
+                        
                         // Handle transcribed text if available
                         if (serverContent.outputTranscription && serverContent.outputTranscription.text) {
                             const transText = serverContent.outputTranscription.text;
@@ -544,6 +594,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             parts.forEach(part => {
                                 if (part.text) {
                                     logTerminal(`Gemini: ${part.text}`, "server");
+                                    currentGeminiResponseText += part.text;
                                     
                                     // Monitor for conversational check-in verification
                                     if (isPostChecking) {
@@ -576,6 +627,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         // Monitor turn complete to transition states
                         if (serverContent.turnComplete) {
                             logTerminal("< turnComplete received from Gemini.", "server");
+                            if (currentGeminiResponseText) {
+                                saveTranscript("gemini", "text", currentGeminiResponseText);
+                                currentGeminiResponseText = "";
+                            }
                             if (isPostChecking && voiceHandshakeStep === 1) {
                                 voiceHandshakeStep = 2;
                                 postFeedback.innerText = "Gemini: 'Can you hear me?' (Speak into mic or click Answer)";
@@ -646,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         ws.send(JSON.stringify(greeting));
         logTerminal(`> Send Handshake Content: "${prompt}"`, "client");
+        saveTranscript("user", "text", prompt);
     }
 
     function handleWebsocketCleanup() {
@@ -664,11 +720,22 @@ document.addEventListener('DOMContentLoaded', () => {
             cameraStream.getTracks().forEach(t => t.stop());
             cameraStream = null;
         }
+        if (activeVideoElement) {
+            try {
+                activeVideoElement.pause();
+                activeVideoElement.srcObject = null;
+                document.body.removeChild(activeVideoElement);
+            } catch(e) {}
+            activeVideoElement = null;
+        }
+        offscreenCanvas = null;
+        offscreenCtx = null;
         if (videoTimerId) {
             clearInterval(videoTimerId);
             videoTimerId = null;
         }
         stopMicrophoneCapture();
+        interruptAudioPlayback(); // Stop any currently playing/queued audio streams from the closed connection
     }
 
     function disconnectGeminiLive() {
@@ -779,26 +846,94 @@ document.addEventListener('DOMContentLoaded', () => {
         sourceNode.connect(audioCtx.destination);
 
         const now = audioCtx.currentTime;
-        if (nextAudioPlayTime < now) {
-            nextAudioPlayTime = now;
+        if (nextAudioPlayTime < now || nextAudioPlayTime - now > 0.5) {
+            nextAudioPlayTime = now + 0.05;
         }
 
         sourceNode.start(nextAudioPlayTime);
         nextAudioPlayTime += buffer.duration;
+
+        // Keep track of active audio nodes to enable interruption
+        activeAudioNodes.push(sourceNode);
+        sourceNode.onended = () => {
+            const idx = activeAudioNodes.indexOf(sourceNode);
+            if (idx > -1) {
+                activeAudioNodes.splice(idx, 1);
+            }
+        };
+    }
+
+    function interruptAudioPlayback() {
+        console.log("[Audio] Interruption triggered. Stopping all active audio nodes.");
+        activeAudioNodes.forEach(node => {
+            try {
+                node.stop();
+            } catch(e) {}
+        });
+        activeAudioNodes = [];
+        nextAudioPlayTime = 0;
     }
 
     // --- 6. Camera Snapshots & Simulated Ingestion Pipeline (1 FPS) ---
     async function startCameraPipeline() {
-        // Try getting webcam stream
+        // Try getting webcam stream with compatible landscape dimensions
         try {
-            cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: 504, height: 896 } });
+            cameraStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: { ideal: 640 }, height: { ideal: 480 } } 
+            });
+            
+            // Create in-memory video element and configure it to prevent frame render suspension
             const video = document.createElement('video');
+            video.muted = true;
+            video.playsInline = true;
+            video.style.display = 'none';
+            document.body.appendChild(video);
+            
+            activeVideoElement = video;
             video.srcObject = cameraStream;
             video.play();
             
+            // Initialize offscreen canvas for network streaming
+            offscreenCanvas = document.createElement('canvas');
+            offscreenCanvas.width = 252;
+            offscreenCanvas.height = 448;
+            offscreenCtx = offscreenCanvas.getContext('2d');
+            
+            // 1. Smooth display drawing loop at 30+ FPS (resolves visual lag)
+            const drawLoop = () => {
+                if (!cameraStream) return;
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    const canvasWidth = cameraCanvas.width;
+                    const canvasHeight = cameraCanvas.height;
+                    const videoWidth = video.videoWidth;
+                    const videoHeight = video.videoHeight;
+                    
+                    const videoAspect = videoWidth / videoHeight;
+                    const canvasAspect = canvasWidth / canvasHeight;
+                    
+                    let sx, sy, sWidth, sHeight;
+                    if (videoAspect > canvasAspect) {
+                        // Landscape source -> crop width to fit portrait canvas
+                        sHeight = videoHeight;
+                        sWidth = videoHeight * canvasAspect;
+                        sx = (videoWidth - sWidth) / 2;
+                        sy = 0;
+                    } else {
+                        // Portrait source -> crop height
+                        sWidth = videoWidth;
+                        sHeight = videoWidth / canvasAspect;
+                        sx = 0;
+                        sy = (videoHeight - sHeight) / 2;
+                    }
+                    cameraCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
+                }
+                requestAnimationFrame(drawLoop);
+            };
+            requestAnimationFrame(drawLoop);
+            
+            // 2. Network streaming loop throttled to 1 FPS to prevent bandwidth buffer lag
             videoTimerId = setInterval(() => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    cameraCtx.drawImage(video, 0, 0, cameraCanvas.width, cameraCanvas.height);
                     frameCount++;
                     frameCounterEl.innerText = `FRAMES: ${frameCount}`;
                     
@@ -806,7 +941,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     streamCurrentFrame();
                 }
             }, 1000);
-            logTerminal("Webcam ingestion pipeline connected (1 FPS).", "client");
+            logTerminal("Webcam ingestion pipeline connected (Smooth 30 FPS display, 1 FPS network stream).", "client");
         } catch(e) {
             logTerminal("Webcam not available. Engaging scrolling telemetry camera generator.", "system");
             
@@ -856,27 +991,79 @@ document.addEventListener('DOMContentLoaded', () => {
     function streamCurrentFrame() {
         if (!isWebsocketConnected) return;
 
-        // Get JPEG base64 representation
-        cameraCanvas.toBlob((blob) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(blob);
-            reader.onloadend = () => {
-                const dataUrl = reader.result;
-                const base64Str = dataUrl.split(',')[1];
-                
-                const frameMsg = {
-                    realtimeInput: {
-                        mediaChunks: [
-                            {
-                                mimeType: "image/jpeg",
-                                data: base64Str
-                            }
-                        ]
-                    }
+        // Check backpressure on socket buffer to prevent network queue lag
+        if (ws && ws.bufferedAmount > 0) {
+            console.log("[Webcam] Skipping frame send due to websocket backpressure.");
+            return;
+        }
+
+        // Draw current frame from activeVideoElement to offscreenCanvas if available to scale down
+        if (offscreenCanvas && offscreenCtx && activeVideoElement && activeVideoElement.readyState === activeVideoElement.HAVE_ENOUGH_DATA) {
+            const videoWidth = activeVideoElement.videoWidth;
+            const videoHeight = activeVideoElement.videoHeight;
+            const videoAspect = videoWidth / videoHeight;
+            const canvasAspect = offscreenCanvas.width / offscreenCanvas.height;
+            
+            let sx, sy, sWidth, sHeight;
+            if (videoAspect > canvasAspect) {
+                sHeight = videoHeight;
+                sWidth = videoHeight * canvasAspect;
+                sx = (videoWidth - sWidth) / 2;
+                sy = 0;
+            } else {
+                sWidth = videoWidth;
+                sHeight = videoWidth / canvasAspect;
+                sx = 0;
+                sy = (videoHeight - sHeight) / 2;
+            }
+            
+            offscreenCtx.drawImage(activeVideoElement, sx, sy, sWidth, sHeight, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            
+            offscreenCanvas.toBlob((blob) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = () => {
+                    const dataUrl = reader.result;
+                    const base64Str = dataUrl.split(',')[1];
+                    
+                    const frameMsg = {
+                        realtimeInput: {
+                            mediaChunks: [
+                                {
+                                    mimeType: "image/jpeg",
+                                    data: base64Str
+                                }
+                            ]
+                        }
+                    };
+                    ws.send(JSON.stringify(frameMsg));
+                    saveTranscript("user", "image", base64Str);
                 };
-                ws.send(JSON.stringify(frameMsg));
-            };
-        }, 'image/jpeg', 0.8);
+            }, 'image/jpeg', 0.4);
+        } else {
+            // Fallback for simulation canvas or if video is not ready
+            cameraCanvas.toBlob((blob) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(blob);
+                reader.onloadend = () => {
+                    const dataUrl = reader.result;
+                    const base64Str = dataUrl.split(',')[1];
+                    
+                    const frameMsg = {
+                        realtimeInput: {
+                            mediaChunks: [
+                                {
+                                    mimeType: "image/jpeg",
+                                    data: base64Str
+                                }
+                            ]
+                        }
+                    };
+                    ws.send(JSON.stringify(frameMsg));
+                    saveTranscript("user", "image", base64Str);
+                };
+            }, 'image/jpeg', 0.4);
+        }
     }
 
     // --- 7. Gemini Tool Delegation to Local OpenClaw Gateway ---
@@ -954,6 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
             logTerminal("Local PC Simulation mode active. Status lights redirected.", "system");
         } else {
             logTerminal("Wearable Link mode active. Waiting for S25 diagnostics heartbeat.", "system");
+            disconnectGeminiLive();
         }
         updateHealthDashboard();
     });

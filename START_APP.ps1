@@ -14,8 +14,8 @@ if (-not (Test-Path $HandoffDir)) {
 Write-Host "[INIT] Executing nuclear cleanup of previous node/openclaw instances..." -ForegroundColor Yellow
 taskkill /F /IM node.exe /T 2>$null
 taskkill /F /IM openclaw.exe /T 2>$null
-# Kill any local ws_proxy.py python processes
-Get-CimInstance Win32_Process -Filter "Name = 'python.exe' AND CommandLine LIKE '%ws_proxy.py%'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# Kill any local ws_proxy.py, run_voice_handshake.py or live_voice_test.py python processes
+Get-CimInstance Win32_Process -Filter "Name = 'python.exe' AND (CommandLine LIKE '%ws_proxy.py%' OR CommandLine LIKE '%run_voice_handshake.py%' OR CommandLine LIKE '%live_voice_test.py%')" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 
 # Clear old log or create a new one
