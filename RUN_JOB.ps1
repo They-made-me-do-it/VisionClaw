@@ -91,6 +91,22 @@ try {
     }
 }
 
+# Test 3: Check POST Check Endpoint
+try {
+    Write-Host "Testing /api/post_check endpoint..."
+    $postCheckRes = Invoke-RestMethod -Uri "http://localhost:18790/api/post_check" -Method Get -TimeoutSec 5
+    if (-not $postCheckRes) { throw "Empty /api/post_check response" }
+    Write-Host "-> /api/post_check results: Node: $($postCheckRes.nodeServer), Gateway: $($postCheckRes.gateway), Gemini API Key: $($postCheckRes.geminiApiKey), Gateway Token: $($postCheckRes.gatewayToken)" -ForegroundColor Gray
+    if ($postCheckRes.nodeServer -ne "PASS") {
+        throw "Node server check failed"
+    }
+    $timelineEvents += @{ event = "API_POST_Check"; time = "$($startTime.ElapsedMilliseconds)ms"; status = "SUCCESS" }
+} catch {
+    $failures++
+    Log-Error "Failed to check /api/post_check: $_"
+    $timelineEvents += @{ event = "API_POST_Check"; time = "$($startTime.ElapsedMilliseconds)ms"; status = "FAILED" }
+}
+
 $startTime.Stop()
 
 # Generating Real JSON outputs

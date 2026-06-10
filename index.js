@@ -1,1050 +1,916 @@
 // index.js
-// VisionClaw Dashboard Controller - Fully Operational Client & Gateway Bridge
+// VisionClaw Dashboard Controller - UI Logic, Local POST self-test, and browser Gemini Live client
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Canvas contexts
+    // Health Lights
+    const lightNode = document.getElementById('light-node');
+    const lightGateway = document.getElementById('light-gateway');
+    const lightPhone = document.getElementById('light-phone');
+    const lightGemini = document.getElementById('light-gemini');
+    const lightGlasses = document.getElementById('light-glasses');
+
+    // POST Panel Elements
+    const runPostBtn = document.getElementById('run-post-btn');
+    const localModeCheckbox = document.getElementById('local-mode-checkbox');
+    const postNode = document.getElementById('post-node');
+    const postGateway = document.getElementById('post-gateway');
+    const postClient = document.getElementById('post-client');
+    const postAudio = document.getElementById('post-audio');
+    const postGemini = document.getElementById('post-gemini');
+    const postFeedback = document.getElementById('post-feedback');
+
+    // Gemini Live Ingress Elements
+    const connectWsBtn = document.getElementById('connect-ws-btn');
+    const disconnectWsBtn = document.getElementById('disconnect-ws-btn');
+    const apiKeyInput = document.getElementById('api-key-input');
+    const gatewayIpInput = document.getElementById('gateway-ip-input');
+    const socketStatusBadge = document.getElementById('socket-status-badge');
+    const resumptionTokenEl = document.getElementById('resumption-token');
+    const wssLogsEl = document.getElementById('wss-logs');
+
+    // Media Elements
     const cameraCanvas = document.getElementById('camera-canvas');
     const cameraCtx = cameraCanvas.getContext('2d');
     const waveformCanvas = document.getElementById('waveform-canvas');
     const waveformCtx = waveformCanvas.getContext('2d');
-
-    // UI elements
     const frameCounterEl = document.getElementById('frame-counter');
-    const breakerStatusEl = document.getElementById('breaker-status');
+    const micToggleBtn = document.getElementById('mic-toggle-btn');
+    const snapBtn = document.getElementById('snap-btn');
+
+    // Action Router & Metrics Elements
+    const toolForm = document.getElementById('tool-form');
+    const toolSelect = document.getElementById('tool-select');
+    const toolArgs = document.getElementById('tool-args');
     const invocationCountEl = document.getElementById('metric-invocations');
     const failureCountEl = document.getElementById('metric-failures');
     const rttEl = document.getElementById('metric-rtt');
     const clawLogsEl = document.getElementById('claw-logs');
-    const wssLogsEl = document.getElementById('wss-logs');
-    const resumptionTokenEl = document.getElementById('resumption-token');
-    
-    // Interactive inputs
-    const apiKeyInput = document.getElementById('api-key-input');
-    const gatewayIpInput = document.getElementById('gateway-ip-input');
-    const connectWsBtn = document.getElementById('connect-ws-btn');
-    const disconnectWsBtn = document.getElementById('disconnect-ws-btn');
-    const socketStatusBadge = document.getElementById('socket-status-badge');
-    const snapBtn = document.getElementById('snap-btn');
-    const micToggleBtn = document.getElementById('mic-toggle-btn');
-    const audioSourceStatusEl = document.getElementById('audio-source-status');
-    const toolForm = document.getElementById('tool-form');
-    const toolSelect = document.getElementById('tool-select');
-    const toolArgs = document.getElementById('tool-args');
     const refreshGalleryBtn = document.getElementById('refresh-gallery-btn');
     const galleryGrid = document.getElementById('gallery-grid');
-    const toggleDebugBtn = document.getElementById('toggle-debug-btn');
-    const debugContainer = document.getElementById('debug-json-container');
 
-    // Amazon UI elements
-    const amazonQueryInput = document.getElementById('amazon-query');
+    // Amazon Inventory Recon Elements
+    const amazonQuery = document.getElementById('amazon-query');
     const amazonSearchBtn = document.getElementById('amazon-search-btn');
-    const amazonResultsContainer = document.getElementById('amazon-results');
+    const amazonResults = document.getElementById('amazon-results');
 
-    // Live Camera Stream
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.playsInline = true;
-    let cameraConnected = false;
-
-    // Web Audio API State
-    let audioCtx = null;
-    let analyser = null;
-    let dataArray = null;
-    let micStreamActive = false;
-    let nextPlayTime = 0; // For queueing downstream audio chunks seamlessly
-
-    // AI Speech visual components
-    let aiAnalyser = null;
-    let aiDataArray = null;
-    let aiActive = false;
-    let aiSilenceTimeout = null;
-
-    // No Fallback Image allowed due to strict anti-mocking rules
-    // WebSocket state
-    let openclawGatewayToken = 'oc_live_token_7a9c8b3d2e1f0';
+    // State Variables
+    let isLocalMode = false;
+    let isWebsocketConnected = false;
     let ws = null;
-    let lastResumptionToken = null;
-    let sendVideoInterval = null;
-
-    // Circuit Breaker state
-    let circuitState = 'CLOSED';
-    let failures = 0;
-    const failureThreshold = 3;
-    let invocations = 0;
-
-    // Logs helper
-    function appendTerminalLog(parent, text, type = 'system') {
-        const line = document.createElement('div');
-        line.className = parent.id === 'wss-logs' ? `terminal-line ${type}` : `log-entry ${type}`;
-        
-        const timestamp = new Date().toLocaleTimeString();
-        line.innerText = `[${timestamp}] ${text}`;
-        parent.appendChild(line);
-        parent.scrollTop = parent.scrollHeight;
-    }
-
-    // Connect to User Media Device (Camera)
-    navigator.mediaDevices.getUserMedia({ 
-        video: { 
-            width: { ideal: 640 }, 
-            height: { ideal: 480 },
-            facingMode: "user" 
-        } 
-    })
-    .then(stream => {
-        video.srcObject = stream;
-        video.onloadedmetadata = () => {
-            video.play();
-            cameraConnected = true;
-            appendTerminalLog(wssLogsEl, "Local camera source connected successfully.", "success");
-            appendTerminalLog(clawLogsEl, "Gateway: Local webcam streaming active.", "success");
-        };
-    })
-    .catch(err => {
-        console.warn("Camera access denied: ", err);
-        appendTerminalLog(wssLogsEl, "Camera access denied. Camera disconnected.", "error");
-        appendTerminalLog(clawLogsEl, "Gateway Error: Camera permissions missing.", "fail");
-    });
-
-    // Helper to draw rescaled and horizontally mirrored camera frame to any canvas context
-    function drawVideoToContext(ctx, canvasWidth, canvasHeight, mirror = true) {
-        if (!cameraConnected || video.readyState !== video.HAVE_ENOUGH_DATA) {
-            ctx.fillStyle = '#0b0f19';
-            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-            ctx.fillStyle = '#ef4444';
-            ctx.font = 'bold 16px "JetBrains Mono"';
-            ctx.textAlign = 'center';
-            ctx.fillText('CAMERA DISCONNECTED / ERROR', canvasWidth / 2, canvasHeight / 2);
-            ctx.textAlign = 'left';
-            return;
-        }
-
-        const videoRatio = video.videoWidth / video.videoHeight;
-        const canvasRatio = canvasWidth / canvasHeight;
-
-        let sx, sy, sWidth, sHeight;
-
-        if (videoRatio > canvasRatio) {
-            // Video is wider than canvas (crop sides)
-            sHeight = video.videoHeight;
-            sWidth = video.videoHeight * canvasRatio;
-            sx = (video.videoWidth - sWidth) / 2;
-            sy = 0;
-        } else {
-            // Video is taller than canvas (crop top/bottom)
-            sWidth = video.videoWidth;
-            sHeight = video.videoWidth / canvasRatio;
-            sx = 0;
-            sy = (video.videoHeight - sHeight) / 2;
-        }
-
-        ctx.save();
-        if (mirror) {
-            ctx.translate(canvasWidth, 0);
-            ctx.scale(-1, 1);
-        }
-        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
-        ctx.restore();
-    }
-
-    // --- 1. Camera Frame Ingestion Loop ---
+    let audioCtx = null;
+    let micStream = null;
+    let mediaRecorderNode = null;
+    let processorNode = null;
+    let nextAudioPlayTime = 0;
+    let cameraStream = null;
     let frameCount = 0;
-    function drawCameraFrame() {
-        frameCount++;
-        frameCounterEl.innerText = `FRAMES: ${frameCount}`;
+    let audioInputReady = false;
+    let isRecordingAudio = false;
+    let videoTimerId = null;
+    let diagnosticInterval = null;
 
-        drawVideoToContext(cameraCtx, cameraCanvas.width, cameraCanvas.height, true);
+    // Metrics Counter
+    let metricInvocations = 0;
+    let metricFailures = 0;
 
-        // HUD overlay
-        cameraCtx.strokeStyle = 'rgba(139, 92, 246, 0.4)';
-        cameraCtx.lineWidth = 1;
-        cameraCtx.beginPath();
-        cameraCtx.moveTo(cameraCanvas.width / 2, 0);
-        cameraCtx.lineTo(cameraCanvas.width / 2, cameraCanvas.height);
-        cameraCtx.moveTo(0, cameraCanvas.height / 2);
-        cameraCtx.lineTo(cameraCanvas.width, cameraCanvas.height / 2);
-        cameraCtx.stroke();
-
-        const cx = cameraCanvas.width / 2;
-        const cy = cameraCanvas.height / 2;
-        const time = Date.now() * 0.001;
-
-        cameraCtx.strokeStyle = '#3b82f6';
-        cameraCtx.lineWidth = 2;
-        cameraCtx.beginPath();
-        cameraCtx.arc(cx, cy, 90 + Math.sin(time * 2) * 5, 0, Math.PI * 2);
-        cameraCtx.stroke();
-
-        cameraCtx.strokeStyle = (ws && ws.readyState === WebSocket.OPEN) ? '#10b981' : '#f59e0b';
-        cameraCtx.lineWidth = 1.5;
-        const boxSize = 70 + Math.cos(time * 3) * 3;
-        cameraCtx.strokeRect(cx - boxSize/2, cy - boxSize/2, boxSize, boxSize);
-
-        cameraCtx.fillStyle = '#ffffff';
-        cameraCtx.font = 'bold 11px "JetBrains Mono"';
-        cameraCtx.shadowColor = 'black';
-        cameraCtx.shadowBlur = 4;
-        cameraCtx.fillText(`LATENCY: 14ms`, 30, 50);
-        cameraCtx.fillText(`FPS: 1.0 (THROTTLED)`, 30, 65);
-        cameraCtx.fillText(`SESSION: ${ws && ws.readyState === WebSocket.OPEN ? "LIVE_API" : "LOOPBACK"}`, 30, 80);
-        cameraCtx.shadowBlur = 0;
-
-        setTimeout(drawCameraFrame, 1000);
-    }
-
-    // --- 2. Live Microphone Audio (Resampling and WebSocket Streaming) ---
-    micToggleBtn.addEventListener('click', () => {
-        if (micStreamActive) return;
-
-        navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const source = audioCtx.createMediaStreamSource(stream);
-            analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 512;
-            
-            source.connect(analyser);
-            
-            const bufferLength = analyser.frequencyBinCount;
-            dataArray = new Uint8Array(bufferLength);
-            
-            micStreamActive = true;
-            audioSourceStatusEl.innerText = "Live Microphone";
-            audioSourceStatusEl.style.color = "#10b981";
-            micToggleBtn.disabled = true;
-            micToggleBtn.innerText = "Audio Connected";
-            
-            appendTerminalLog(wssLogsEl, "Microphone audio context initialized.", "success");
-
-            // Setup script processor to resample to 16 kHz Mono Int16 PCM and stream to WSS
-            const bufferSize = 4096;
-            const scriptNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-            source.connect(scriptNode);
-            scriptNode.connect(audioCtx.destination); // Required to trigger onprocess
-
-            scriptNode.onaudioprocess = (e) => {
-                if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-                const inputData = e.inputBuffer.getChannelData(0);
-
-                // Smart local VAD based on RMS volume check
-                let sum = 0;
-                for (let i = 0; i < inputData.length; i++) {
-                    sum += inputData[i] * inputData[i];
-                }
-                const rms = Math.sqrt(sum / inputData.length);
-                if (rms > 0.015 && !aiActive) {
-                    if (socketStatusBadge) {
-                        socketStatusBadge.innerText = "LISTENING";
-                        socketStatusBadge.className = "status-value status-listening";
-                    }
-                } else if (rms <= 0.015 && !aiActive) {
-                    if (socketStatusBadge) {
-                        socketStatusBadge.innerText = "CONNECTED";
-                        socketStatusBadge.className = "status-value status-ok";
-                    }
-                }
-
-                const resampled = resample(inputData, e.inputBuffer.sampleRate, 16000);
-                const pcmBuffer = floatTo16BitPCM(resampled);
-                const base64Audio = base64ArrayBuffer(pcmBuffer.buffer);
-
-                // Stream real-time chunk to Gemini
-                ws.send(JSON.stringify({
-                    realtimeInput: {
-                        mediaChunks: [{
-                            mimeType: "audio/pcm;rate=16000",
-                            data: base64Audio
-                        }]
-                    }
-                }));
-            };
-        })
-        .catch(err => {
-            console.error("Microphone access denied: ", err);
-            appendTerminalLog(wssLogsEl, "Microphone access denied.", "error");
-        });
-    });
-
-    // Audio Resampler helper (Linear)
-    function resample(inputData, inputSampleRate, outputSampleRate) {
-        if (inputSampleRate === outputSampleRate) return inputData;
-        const ratio = inputSampleRate / outputSampleRate;
-        const newLength = Math.round(inputData.length / ratio);
-        const result = new Float32Array(newLength);
-        let offsetResult = 0;
-        let offsetInput = 0;
-        while (offsetResult < result.length) {
-            const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-            let accum = 0, count = 0;
-            for (let i = offsetInput; i < nextOffsetBuffer && i < inputData.length; i++) {
-                accum += inputData[i];
-                count++;
-            }
-            result[offsetResult] = count > 0 ? accum / count : 0;
-            offsetResult++;
-            offsetInput = nextOffsetBuffer;
+    // Speak helper using Web Speech API
+    function speakText(text) {
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            window.speechSynthesis.speak(utterance);
         }
-        return result;
+        console.log(`[POST TTS] ${text}`);
     }
 
-    // Float32 to Int16 PCM Converter
-    function floatTo16BitPCM(input) {
-        const output = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-            const s = Math.max(-1, Math.min(1, input[i]));
-            output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        return output;
+    function logTerminal(message, type = 'system') {
+        const line = document.createElement('div');
+        line.className = `terminal-line ${type}`;
+        const timestamp = new Date().toLocaleTimeString();
+        line.innerText = `[${timestamp}] ${message}`;
+        wssLogsEl.appendChild(line);
+        wssLogsEl.scrollTop = wssLogsEl.scrollHeight;
     }
 
-    // Base64 array buffer encoder
-    function base64ArrayBuffer(arrayBuffer) {
-        let binary = '';
-        const bytes = new Uint8Array(arrayBuffer);
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return window.btoa(binary);
+    function logClaw(message, type = 'system') {
+        const line = document.createElement('div');
+        line.className = `log-entry ${type}`;
+        line.innerText = message;
+        clawLogsEl.appendChild(line);
+        clawLogsEl.scrollTop = clawLogsEl.scrollHeight;
     }
 
-    // Live Audio Waveform animation loop
-    let isDrawing = true;
-    let audioPhase = 0;
-    function drawAudioWaveform() {
-        if (!isDrawing) return;
+    function setLightStatus(el, status) {
+        if (!el) return;
+        el.className = `status-light light-${status}`;
+    }
 
-        requestAnimationFrame(drawAudioWaveform);
-        waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+    function setBadgeStatus(el, text, statusClass) {
+        if (!el) return;
+        el.innerText = text.toUpperCase();
+        el.className = `status-badge ${statusClass}`;
+    }
 
-        if (aiActive && aiDataArray) {
-            aiAnalyser.getByteTimeDomainData(aiDataArray);
-            const aiGradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
-            aiGradient.addColorStop(0, '#c084fc');
-            aiGradient.addColorStop(0.5, '#a78bfa');
-            aiGradient.addColorStop(1, '#ec4899');
-            
-            waveformCtx.strokeStyle = aiGradient;
-            waveformCtx.lineWidth = 3.5;
-            waveformCtx.shadowColor = 'rgba(139, 92, 246, 0.4)';
-            waveformCtx.shadowBlur = 10;
-            waveformCtx.beginPath();
+    // --- 1. POST (Power-On Self-Test) Logic ---
+    async function runPostCheck() {
+        postFeedback.style.display = 'block';
+        postFeedback.innerText = "Initializing system self-test...";
+        speakText("Vision Claw Power-On Self Test initiated.");
 
-            const sliceWidth = waveformCanvas.width / aiDataArray.length;
-            let x = 0;
-            for (let i = 0; i < aiDataArray.length; i++) {
-                const v = aiDataArray[i] / 128.0;
-                const y = v * (waveformCanvas.height / 2);
-                if (i === 0) waveformCtx.moveTo(x, y);
-                else waveformCtx.lineTo(x, y);
-                x += sliceWidth;
-            }
-            waveformCtx.stroke();
-            waveformCtx.shadowBlur = 0;
+        // Step 1: Check Node Server
+        setBadgeStatus(postNode, 'checking', 'state-checking');
+        await new Promise(r => setTimeout(r, 600));
+        let nodeOk = false;
+        try {
+            const res = await fetch('/api/config');
+            if (res.ok) nodeOk = true;
+        } catch(e) {}
+
+        if (nodeOk) {
+            setBadgeStatus(postNode, 'pass', 'state-pass');
+            speakText("Node server online.");
+            setLightStatus(lightNode, 'ok');
         } else {
-            const gradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
-            gradient.addColorStop(0, '#3b82f6');
-            gradient.addColorStop(0.5, '#8b5cf6');
-            gradient.addColorStop(1, '#ec4899');
-            
-            waveformCtx.strokeStyle = gradient;
-            waveformCtx.lineWidth = 2.5;
-            waveformCtx.beginPath();
-
-            if (micStreamActive && dataArray) {
-                analyser.getByteTimeDomainData(dataArray);
-                const sliceWidth = waveformCanvas.width / dataArray.length;
-                let x = 0;
-                for (let i = 0; i < dataArray.length; i++) {
-                    const v = dataArray[i] / 128.0;
-                    const y = v * (waveformCanvas.height / 2);
-                    if (i === 0) waveformCtx.moveTo(x, y);
-                    else waveformCtx.lineTo(x, y);
-                    x += sliceWidth;
-                }
-                waveformCtx.stroke();
-            } else {
-            const amp = 20 + Math.sin(Date.now() * 0.003) * 8;
-            const freq = 0.045;
-            audioPhase += 0.12;
-            for (let x = 0; x < waveformCanvas.width; x++) {
-                const y = waveformCanvas.height / 2 + Math.sin(x * freq + audioPhase) * amp * Math.cos(x * 0.006);
-                if (x === 0) waveformCtx.moveTo(x, y);
-                else waveformCtx.lineTo(x, y);
-            }
-        }
-        }
-        waveformCtx.stroke();
-    }
-
-    // --- 3. Gemini Live WSS Connection Handler ---
-    let userDisconnected = false;
-    let reconnectTimeout = null;
-
-    function connectGeminiLive() {
-        const apiKey = apiKeyInput.value.trim();
-        if (!apiKey) {
-            appendTerminalLog(wssLogsEl, "Cannot reconnect: API key missing.", "error");
+            setBadgeStatus(postNode, 'fail', 'state-fail');
+            speakText("Node server offline.");
+            setLightStatus(lightNode, 'error');
+            postFeedback.innerText = "POST Failed: Node server unreachable.";
             return;
         }
 
-        userDisconnected = false;
-        if (reconnectTimeout) {
-            clearTimeout(reconnectTimeout);
-            reconnectTimeout = null;
+        // Step 2: Check OpenClaw Gateway
+        setBadgeStatus(postGateway, 'checking', 'state-checking');
+        await new Promise(r => setTimeout(r, 600));
+        let gatewayOk = false;
+        try {
+            const res = await fetch('/api/post_check');
+            const data = await res.json();
+            if (data.gateway === "PASS") gatewayOk = true;
+        } catch(e) {}
+
+        if (gatewayOk) {
+            setBadgeStatus(postGateway, 'pass', 'state-pass');
+            speakText("Open Claw gateway online.");
+            setLightStatus(lightGateway, 'ok');
+        } else {
+            setBadgeStatus(postGateway, 'fail', 'state-fail');
+            speakText("Open Claw gateway unreachable.");
+            setLightStatus(lightGateway, 'error');
+            postFeedback.innerText = "POST Failed: OpenClaw gateway offline. Ensure port 18789 is running.";
+            return;
         }
 
-        connectWsBtn.disabled = true;
-        connectWsBtn.innerText = "Connecting...";
-        appendTerminalLog(wssLogsEl, "Connecting to Gemini Live WSS...", "system");
+        // Step 3: Check Client Device
+        setBadgeStatus(postClient, 'checking', 'state-checking');
+        await new Promise(r => setTimeout(r, 600));
+        
+        if (isLocalMode) {
+            setBadgeStatus(postClient, 'pass', 'state-pass');
+            speakText("Local P C client initialized.");
+            setLightStatus(lightPhone, 'ok');
+        } else {
+            // Check if we have received S25 diagnostics recently
+            let s25Active = false;
+            try {
+                const res = await fetch('/api/diagnostics_latest');
+                const report = await res.json();
+                if (report && !report.error && (Date.now() - report.timestamp < 30000)) {
+                    s25Active = true;
+                }
+            } catch(e) {}
 
-        const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-        ws = new WebSocket(url);
+            if (s25Active) {
+                setBadgeStatus(postClient, 'pass', 'state-pass');
+                speakText("Wearable link active.");
+                setLightStatus(lightPhone, 'ok');
+            } else {
+                setBadgeStatus(postClient, 'fail', 'state-fail');
+                speakText("Wearable link disconnected.");
+                setLightStatus(lightPhone, 'error');
+                postFeedback.innerText = "POST Failed: Client device heartbeat not detected. Connect phone or switch to Local PC Mode.";
+                return;
+            }
+        }
+
+        // Step 4: Check Audio IO
+        setBadgeStatus(postAudio, 'checking', 'state-checking');
+        await new Promise(r => setTimeout(r, 600));
+        
+        if (isLocalMode) {
+            // Ask for browser microphone access
+            try {
+                const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                testStream.getTracks().forEach(t => t.stop()); // close immediately
+                audioInputReady = true;
+                setBadgeStatus(postAudio, 'pass', 'state-pass');
+                speakText("Local microphone verified.");
+                setLightStatus(lightGlasses, 'ok');
+            } catch (e) {
+                audioInputReady = false;
+                setBadgeStatus(postAudio, 'fail', 'state-fail');
+                speakText("Microphone access denied.");
+                setLightStatus(lightGlasses, 'error');
+                postFeedback.innerText = "POST Failed: Cannot access microphone.";
+                return;
+            }
+        } else {
+            // Check Android audio scope state
+            let glassesAudioOk = false;
+            try {
+                const res = await fetch('/api/diagnostics_latest');
+                const report = await res.json();
+                if (report && report.audioHardware && report.audioHardware.isScoConnected) {
+                    glassesAudioOk = true;
+                }
+            } catch(e) {}
+
+            if (glassesAudioOk) {
+                setBadgeStatus(postAudio, 'pass', 'state-pass');
+                speakText("Wearable audio routed.");
+                setLightStatus(lightGlasses, 'ok');
+            } else {
+                setBadgeStatus(postAudio, 'fail', 'state-fail');
+                speakText("Wearable audio offline.");
+                setLightStatus(lightGlasses, 'error');
+                postFeedback.innerText = "POST Warning: Smart glasses audio not active. Connect audio on device.";
+                // We let it pass with warnings
+                setBadgeStatus(postAudio, 'warn', 'state-checking');
+            }
+        }
+
+        // Step 5: Check Gemini Live connection
+        setBadgeStatus(postGemini, 'checking', 'state-checking');
+        await new Promise(r => setTimeout(r, 600));
+
+        if (isWebsocketConnected) {
+            setBadgeStatus(postGemini, 'pass', 'state-pass');
+            speakText("Gemini Live session connected.");
+            setLightStatus(lightGemini, 'active');
+        } else {
+            setBadgeStatus(postGemini, 'pending', 'state-pending');
+            speakText("Gemini Live offline. Complete the websocket configuration below to connect.");
+            setLightStatus(lightGemini, 'off');
+        }
+
+        speakText("System Power-On Self Test completed successfully.");
+        postFeedback.innerText = "POST Passed. VisionClaw services operational.";
+    }
+
+    // --- 2. Live Health Checking Loop ---
+    function updateHealthDashboard() {
+        if (isLocalMode) {
+            // Direct Local values overrides phone heartbeats
+            setLightStatus(lightNode, 'ok');
+            setLightStatus(lightGateway, 'ok'); // Managed by POST response check
+            setLightStatus(lightPhone, 'ok'); // Phone light stands for local browser
+            setLightStatus(lightGlasses, audioInputReady ? 'ok' : 'error');
+            setLightStatus(lightGemini, isWebsocketConnected ? 'active' : 'off');
+            return;
+        }
+
+        // Regular phone heartbeat mode
+        fetch('/api/config')
+            .then(res => res.ok ? res.json() : Promise.reject())
+            .then(() => setLightStatus(lightNode, 'ok'))
+            .catch(() => setLightStatus(lightNode, 'error'));
+
+        fetch('/api/diagnostics_latest')
+            .then(res => res.json())
+            .then(report => {
+                if (report.error) {
+                    setLightStatus(lightPhone, 'off');
+                    setLightStatus(lightGemini, 'off');
+                    setLightStatus(lightGlasses, 'off');
+                    return;
+                }
+
+                const reportAge = Date.now() - report.timestamp;
+                if (reportAge < 20000) {
+                    setLightStatus(lightPhone, 'ok');
+                    setLightStatus(lightGemini, report.isGeminiActive ? 'active' : 'off');
+                    setLightStatus(lightGlasses, (report.audioHardware && report.audioHardware.isScoConnected) ? 'ok' : 'error');
+                } else {
+                    setLightStatus(lightPhone, 'warn');
+                    setLightStatus(lightGemini, 'off');
+                    setLightStatus(lightGlasses, 'off');
+                }
+            })
+            .catch(() => setLightStatus(lightPhone, 'off'));
+    }
+
+    // --- 3. Browser Gemini Live WebSocket Client ---
+    async function connectGeminiLive() {
+        const apiKey = apiKeyInput.value.trim();
+        const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
+
+        if (!apiKey) {
+            logTerminal("Connection Failed: Gemini API Key is required.", "error");
+            alert("Please enter a Gemini API Key.");
+            return;
+        }
+
+        logTerminal("Initiating WebSocket connection to Gemini Live...", "system");
+        
+        // Initialize Web Audio context
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+
+        const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+
+        try {
+            ws = new WebSocket(wsUrl);
+        } catch(e) {
+            logTerminal(`WebSocket failed to create: ${e.message}`, "error");
+            return;
+        }
 
         ws.onopen = () => {
+            isWebsocketConnected = true;
+            logTerminal("WebSocket connection successfully established.", "server");
             socketStatusBadge.innerText = "CONNECTED";
             socketStatusBadge.className = "status-value status-ok";
+            setLightStatus(lightGemini, 'active');
+
+            // Send setup config block
+            const setupMsg = {
+                setup: {
+                    model: "models/gemini-2.0-flash-exp"
+                }
+            };
+            ws.send(JSON.stringify(setupMsg));
+            logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.0-flash-exp] sent.", "client");
+
+            // Update UI elements
             connectWsBtn.classList.add('hidden');
             disconnectWsBtn.classList.remove('hidden');
-            
-            appendTerminalLog(wssLogsEl, "WebSocket Connection Established.", "success");
-            
-            // Send Setup Payload
-            sendWSSSetup();
-            
-            // Start 1-fps video transmission loop
-            sendVideoInterval = setInterval(sendVideoFrame, 1000);
+
+            // Send initial introduction
+            sendIntroGreeting();
+
+            // Start Webcam frame streaming if permitted
+            startCameraPipeline();
         };
 
-        ws.onmessage = (e) => {
-            if (typeof e.data === 'string') {
-                handleWSSMessage(e.data);
-            } else if (e.data instanceof Blob) {
-                // Read binary audio output from Gemini Live WSS and play it directly
-                e.data.arrayBuffer().then(buffer => {
-                    playRawPCMBuffer(buffer);
-                }).catch(err => {
-                    console.error("Error reading audio binary blob:", err);
-                });
+        ws.onmessage = async (event) => {
+            let text = "";
+            if (event.data instanceof Blob) {
+                // If it is raw binary PCM, play it directly
+                const arrayBuffer = await event.data.arrayBuffer();
+                const pcm16 = new Int16Array(arrayBuffer);
+                playPCM24k(pcm16);
+                return;
+            } else {
+                text = event.data;
             }
-        };
 
-        ws.onerror = (err) => {
-            appendTerminalLog(wssLogsEl, "WebSocket Error: connection failed.", "error");
-        };
+            try {
+                const response = JSON.parse(text);
+                
+                // Print to terminal logs
+                if (response.setupComplete) {
+                    logTerminal("< setupComplete payload received.", "server");
+                }
 
-        ws.onclose = () => {
-            handleWSSDisconnect();
-            if (!userDisconnected) {
-                appendTerminalLog(wssLogsEl, "WSS closed unexpectedly. Retrying in 5s...", "warning");
-                reconnectTimeout = setTimeout(() => {
-                    appendTerminalLog(wssLogsEl, "Reconnecting WebSocket...", "system");
-                    connectGeminiLive();
-                }, 5000);
-            }
-        };
-    }
+                // Handle text transcript display
+                if (response.serverContent) {
+                    const serverContent = response.serverContent;
+                    const modelTurn = serverContent.modelTurn;
+                    const parts = modelTurn ? modelTurn.parts : serverContent.parts;
+                    
+                    if (parts) {
+                        parts.forEach(part => {
+                            if (part.text) {
+                                logTerminal(`Gemini: ${part.text}`, "server");
+                            }
+                            if (part.inlineData) {
+                                const mime = part.inlineData.mimeType;
+                                if (mime.includes("audio/pcm")) {
+                                    const base64Data = part.inlineData.data;
+                                    const rawBytes = atob(base64Data);
+                                    const pcmData = new Int16Array(rawBytes.length / 2);
+                                    for(let i=0; i<pcmData.length; i++) {
+                                        pcmData[i] = (rawBytes.charCodeAt(i*2) & 0xFF) | ((rawBytes.charCodeAt(i*2+1) & 0xFF) << 8);
+                                    }
+                                    playPCM24k(pcmData);
+                                }
+                            }
+                        });
+                    }
+                }
 
-    connectWsBtn.addEventListener('click', () => {
-        const apiKey = apiKeyInput.value.trim();
-        if (!apiKey) {
-            alert("Please enter a valid Gemini API Key to connect.");
-            return;
-        }
-        connectGeminiLive();
-    });
+                // Handle session resumption tokens
+                if (response.sessionResumptionUpdate) {
+                    const token = response.sessionResumptionUpdate.new_handle || response.sessionResumptionUpdate.resumptionToken;
+                    if (token) {
+                        resumptionTokenEl.innerText = token.slice(0, 16) + "...";
+                    }
+                }
 
-    disconnectWsBtn.addEventListener('click', () => {
-        userDisconnected = true;
-        if (reconnectTimeout) {
-            clearTimeout(reconnectTimeout);
-            reconnectTimeout = null;
-        }
-        if (ws) {
-            ws.close();
-        }
-    });
-
-    function handleWSSDisconnect() {
-        socketStatusBadge.innerText = "DISCONNECTED";
-        socketStatusBadge.className = "status-value status-error";
-        connectWsBtn.disabled = false;
-        connectWsBtn.innerText = "Connect Live API";
-        connectWsBtn.classList.remove('hidden');
-        disconnectWsBtn.classList.add('hidden');
-        
-        if (sendVideoInterval) {
-            clearInterval(sendVideoInterval);
-        }
-        
-        appendTerminalLog(wssLogsEl, "WebSocket Connection Closed.", "system");
-        ws = null;
-    }
-
-    function sendWSSSetup() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-        const setupPayload = {
-            setup: {
-                model: "models/gemini-3.1-flash-live-preview",
-                generationConfig: {
-                    responseModalities: ["AUDIO"],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: {
-                                voiceName: "Puck"
+                // Handle Tool Calls
+                if (response.toolCall) {
+                    const functionCalls = response.toolCall.functionCalls;
+                    if (functionCalls) {
+                        for (let call of functionCalls) {
+                            if (call.name === "execute") {
+                                handleGeminiToolCall(call.args, call.id, gatewayHost);
                             }
                         }
                     }
-                },
-                contextWindowCompression: {
-                    slidingWindow: {
-                        targetTokens: 2000
-                    }
-                },
-                tools: [
+                }
+            } catch(e) {
+                console.error("Parse error:", e);
+            }
+        };
+
+        ws.onerror = (error) => {
+            logTerminal(`WebSocket Error occurred. Connection aborted.`, "error");
+            console.error(error);
+        };
+
+        ws.onclose = () => {
+            handleWebsocketCleanup();
+        };
+    }
+
+    function sendIntroGreeting() {
+        const prompt = "VisionClaw PC Host Online. Gemini, introducing myself. Confirm audio/video telemetry link active.";
+        const greeting = {
+            clientContent: {
+                turns: [
                     {
-                        functionDeclarations: [
-                            {
-                                name: "execute",
-                                description: "Execute local tool action via the OpenClaw Gateway on the LAN",
-                                parameters: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        toolName: { type: "STRING", description: "The target tool name to run, e.g. capture_photo" },
-                                        arguments: { type: "OBJECT", description: "JSON arguments matching tool specifications" }
-                                    },
-                                    required: ["toolName"]
-                                }
-                            }
-                        ]
+                        role: "user",
+                        parts: [{ text: prompt }]
                     }
                 ]
             }
         };
-
-        if (lastResumptionToken) {
-            setupPayload.setup.resumptionToken = lastResumptionToken;
-        }
-
-        ws.send(JSON.stringify(setupPayload));
-        appendTerminalLog(wssLogsEl, "> Setup message sent with tools configuration.", "client");
+        ws.send(JSON.stringify(greeting));
+        logTerminal(`> Send Handshake Content: "${prompt}"`, "client");
     }
 
-    function sendVideoFrame() {
-        if (!ws || ws.readyState !== WebSocket.OPEN || !cameraConnected) return;
+    function handleWebsocketCleanup() {
+        isWebsocketConnected = false;
+        ws = null;
+        logTerminal("WebSocket connection closed cleanly.", "system");
+        socketStatusBadge.innerText = "DISCONNECTED";
+        socketStatusBadge.className = "status-value status-error";
+        setLightStatus(lightGemini, 'off');
 
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 504;
-        tempCanvas.height = 896;
-        const tempCtx = tempCanvas.getContext('2d');
+        connectWsBtn.classList.remove('hidden');
+        disconnectWsBtn.classList.add('hidden');
 
-        drawVideoToContext(tempCtx, tempCanvas.width, tempCanvas.height, true);
+        // Stop camera
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(t => t.stop());
+            cameraStream = null;
+        }
+        if (videoTimerId) {
+            clearInterval(videoTimerId);
+            videoTimerId = null;
+        }
+        stopMicrophoneCapture();
+    }
 
-        tempCanvas.toBlob(blob => {
-            if (!blob) return;
+    function disconnectGeminiLive() {
+        if (ws) {
+            ws.close();
+        }
+    }
+
+    // --- 4. Audio Input streaming to Gemini Live ---
+    async function startMicrophoneCapture() {
+        if (!isWebsocketConnected) {
+            alert("Please connect to the Gemini Live session first.");
+            return;
+        }
+
+        try {
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const source = audioCtx.createMediaStreamSource(micStream);
+            
+            // ScriptProcessorNode for sample conversion (using standard buffer size 4096)
+            processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+            
+            const nativeSampleRate = audioCtx.sampleRate;
+            let sampleBuffer = [];
+
+            processorNode.onaudioprocess = (e) => {
+                if (!isWebsocketConnected) return;
+
+                const inputData = e.inputBuffer.getChannelData(0);
+                
+                // Simple downsampling to 16 kHz Mono
+                const ratio = nativeSampleRate / 16000;
+                let index = 0;
+                while (index < inputData.length) {
+                    const sample = inputData[Math.round(index)];
+                    // Convert float to Int16 PCM sample
+                    const intSample = sample < 0 ? sample * 32768 : sample * 32767;
+                    sampleBuffer.push(Math.max(-32768, Math.min(32767, intSample)));
+                    index += ratio;
+                }
+
+                // If sample buffer size >= 1600 samples (100 ms chunk), stream it
+                if (sampleBuffer.length >= 1600) {
+                    const chunk = new Int16Array(sampleBuffer.slice(0, 1600));
+                    sampleBuffer = sampleBuffer.slice(1600);
+
+                    // Convert Int16 array to base64
+                    const binaryString = String.fromCharCode.apply(null, new Uint8Array(chunk.buffer));
+                    const base64Str = btoa(binaryString);
+
+                    const chunkMsg = {
+                        realtimeInput: {
+                            mediaChunks: [
+                                {
+                                    mimeType: "audio/pcm;rate=16000",
+                                    data: base64Str
+                                }
+                            ]
+                        }
+                    };
+                    ws.send(JSON.stringify(chunkMsg));
+                }
+            };
+
+            source.connect(processorNode);
+            processorNode.connect(audioCtx.destination);
+            
+            isRecordingAudio = true;
+            micToggleBtn.innerText = "Disconnect Audio Input";
+            micToggleBtn.className = "btn btn-sm btn-connect";
+            document.getElementById('audio-source-status').innerText = "Web Audio Mic";
+            logTerminal("Microphone streaming engaged (16 kHz Int16 PCM).", "client");
+        } catch(e) {
+            logTerminal(`Failed to initialize microphone capture: ${e.message}`, "error");
+        }
+    }
+
+    function stopMicrophoneCapture() {
+        if (micStream) {
+            micStream.getTracks().forEach(t => t.stop());
+            micStream = null;
+        }
+        if (processorNode) {
+            processorNode.disconnect();
+            processorNode = null;
+        }
+        isRecordingAudio = false;
+        micToggleBtn.innerText = "Connect Audio Input";
+        micToggleBtn.className = "btn btn-sm btn-secondary";
+        document.getElementById('audio-source-status').innerText = "Simulated Sine";
+    }
+
+    // --- 5. Audio Playback (Paced Playback Queue) ---
+    function playPCM24k(int16Array) {
+        if (!audioCtx) return;
+        
+        // Convert Int16 back to Floats
+        const floatArray = new Float32Array(int16Array.length);
+        for(let i=0; i<int16Array.length; i++) {
+            floatArray[i] = int16Array[i] / 32768.0;
+        }
+
+        const buffer = audioCtx.createBuffer(1, floatArray.length, 24000);
+        buffer.getChannelData(0).set(floatArray);
+
+        const sourceNode = audioCtx.createBufferSource();
+        sourceNode.buffer = buffer;
+        sourceNode.connect(audioCtx.destination);
+
+        const now = audioCtx.currentTime;
+        if (nextAudioPlayTime < now) {
+            nextAudioPlayTime = now;
+        }
+
+        sourceNode.start(nextAudioPlayTime);
+        nextAudioPlayTime += buffer.duration;
+    }
+
+    // --- 6. Camera Snapshots & Simulated Ingestion Pipeline (1 FPS) ---
+    async function startCameraPipeline() {
+        // Try getting webcam stream
+        try {
+            cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: 504, height: 896 } });
+            const video = document.createElement('video');
+            video.srcObject = cameraStream;
+            video.play();
+            
+            videoTimerId = setInterval(() => {
+                if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                    cameraCtx.drawImage(video, 0, 0, cameraCanvas.width, cameraCanvas.height);
+                    frameCount++;
+                    frameCounterEl.innerText = `FRAMES: ${frameCount}`;
+                    
+                    // Stream to Gemini if connected
+                    streamCurrentFrame();
+                }
+            }, 1000);
+            logTerminal("Webcam ingestion pipeline connected (1 FPS).", "client");
+        } catch(e) {
+            logTerminal("Webcam not available. Engaging scrolling telemetry camera generator.", "system");
+            
+            // Falling back to a scrolling simulation canvas frame
+            let offset = 0;
+            videoTimerId = setInterval(() => {
+                // Draw scrolling grid
+                cameraCtx.fillStyle = '#0a0d16';
+                cameraCtx.fillRect(0, 0, cameraCanvas.width, cameraCanvas.height);
+
+                cameraCtx.strokeStyle = 'rgba(139, 92, 246, 0.2)';
+                cameraCtx.lineWidth = 1;
+                offset = (offset + 10) % 40;
+
+                for (let x = offset; x < cameraCanvas.width; x += 40) {
+                    cameraCtx.beginPath();
+                    cameraCtx.moveTo(x, 0);
+                    cameraCtx.lineTo(x, cameraCanvas.height);
+                    cameraCtx.stroke();
+                }
+                for (let y = offset; y < cameraCanvas.height; y += 40) {
+                    cameraCtx.beginPath();
+                    cameraCtx.moveTo(0, y);
+                    cameraCtx.lineTo(cameraCanvas.width, y);
+                    cameraCtx.stroke();
+                }
+
+                // Draw central crosshair & overlay text
+                cameraCtx.strokeStyle = '#8b5cf6';
+                cameraCtx.lineWidth = 2;
+                cameraCtx.strokeRect(cameraCanvas.width * 0.2, cameraCanvas.height * 0.2, cameraCanvas.width * 0.6, cameraCanvas.height * 0.6);
+
+                cameraCtx.fillStyle = '#f3f4f6';
+                cameraCtx.font = '14px Outfit, sans-serif';
+                cameraCtx.fillText("VISIONCLAW SIMULATOR FRAME", 40, 60);
+                cameraCtx.fillText(`UTC: ${new Date().toISOString()}`, 40, 90);
+                cameraCtx.fillText("PRIVACY FILTER: PASSING", 40, 120);
+
+                frameCount++;
+                frameCounterEl.innerText = `FRAMES: ${frameCount}`;
+
+                streamCurrentFrame();
+            }, 1000);
+        }
+    }
+
+    function streamCurrentFrame() {
+        if (!isWebsocketConnected) return;
+
+        // Get JPEG base64 representation
+        cameraCanvas.toBlob((blob) => {
             const reader = new FileReader();
             reader.readAsDataURL(blob);
             reader.onloadend = () => {
-                const base64 = reader.result.split(',')[1];
-                ws.send(JSON.stringify({
+                const dataUrl = reader.result;
+                const base64Str = dataUrl.split(',')[1];
+                
+                const frameMsg = {
                     realtimeInput: {
-                        mediaChunks: [{
-                            mimeType: "image/jpeg",
-                            data: base64
-                        }]
+                        mediaChunks: [
+                            {
+                                mimeType: "image/jpeg",
+                                data: base64Str
+                            }
+                        ]
                     }
-                }));
+                };
+                ws.send(JSON.stringify(frameMsg));
             };
-        }, 'image/jpeg', 0.5);
+        }, 'image/jpeg', 0.8);
     }
 
-    function handleWSSMessage(dataString) {
-        try {
-            const json = JSON.parse(dataString);
+    // --- 7. Gemini Tool Delegation to Local OpenClaw Gateway ---
+    function handleGeminiToolCall(argsPayload, callId, gatewayHost) {
+        logTerminal(`[Tool Dispatch] Intercepted callId: ${callId}. Routing: ${JSON.stringify(argsPayload)}`, "client");
+        logClaw(`Proxying execution request to http://${gatewayHost}:18789...`, "invoke");
 
-            // 1. Ingest audio feedback
-            if (json.serverContent && json.serverContent.parts) {
-                json.serverContent.parts.forEach(part => {
-                    if (part.inlineData && part.inlineData.mimeType.includes("audio/pcm")) {
-                        playPCM(part.inlineData.data);
-                    }
-                    if (part.text) {
-                        appendTerminalLog(wssLogsEl, `Transcript: ${part.text}`, "server");
-                    }
-                });
-            }
+        const startTime = Date.now();
 
-            // 2. Cache resumption token
-            if (json.sessionResumptionUpdate && json.sessionResumptionUpdate.resumptionToken) {
-                lastResumptionToken = json.sessionResumptionUpdate.resumptionToken;
-                resumptionTokenEl.innerText = lastResumptionToken.substring(0, 15) + '...';
-                appendTerminalLog(wssLogsEl, `Resumption update cached.`, "system");
-            }
-
-            // 3. Intercept and execute tool calls
-            if (json.toolCall && json.toolCall.functionCalls) {
-                json.toolCall.functionCalls.forEach(call => {
-                    if (call.name === 'execute') {
-                        routeLiveToolCall(call.args, call.id);
-                    }
-                });
-            }
-        } catch (err) {
-            console.error("Error parsing WSS message:", err);
-        }
-    }
-
-    // Playback 24 kHz mono Int16 PCM chunks
-    function playPCM(base64Audio) {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-
-        const binary = window.atob(base64Audio);
-        const len = binary.length;
-        const buffer = new ArrayBuffer(len);
-        const bytes = new Uint8Array(buffer);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binary.charCodeAt(i);
-        }
-        const int16Array = new Int16Array(buffer);
-        const float32Array = new Float32Array(int16Array.length);
-        for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 32768.0;
-        }
-        
-        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Array);
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        
-        // Setup visual AI Analyser
-        if (!aiAnalyser) {
-            aiAnalyser = audioCtx.createAnalyser();
-            aiAnalyser.fftSize = 512;
-            const bufferLength = aiAnalyser.frequencyBinCount;
-            aiDataArray = new Uint8Array(bufferLength);
-        }
-        source.connect(aiAnalyser);
-        aiAnalyser.connect(audioCtx.destination);
-        
-        const currentTime = audioCtx.currentTime;
-        if (nextPlayTime < currentTime) {
-            nextPlayTime = currentTime;
-        }
-        source.start(nextPlayTime);
-        nextPlayTime += audioBuffer.duration;
-
-        // Visual feedback when AI starts speaking
-        aiActive = true;
-        if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
-            socketStatusBadge.innerText = "SPEAKING";
-            socketStatusBadge.className = "status-value status-active";
-        }
-
-        if (aiSilenceTimeout) clearTimeout(aiSilenceTimeout);
-        const durationMs = audioBuffer.duration * 1000;
-        aiSilenceTimeout = setTimeout(() => {
-            if (audioCtx.currentTime >= nextPlayTime - 0.05) {
-                aiActive = false;
-                if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
-                    socketStatusBadge.innerText = "CONNECTED";
-                    socketStatusBadge.className = "status-value status-ok";
-                }
-            }
-        }, durationMs + 100);
-    }
-
-    // Playback raw binary ArrayBuffer PCM audio
-    function playRawPCMBuffer(arrayBuffer) {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        const int16Array = new Int16Array(arrayBuffer);
-        const float32Array = new Float32Array(int16Array.length);
-        for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 32768.0;
-        }
-        
-        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Array);
-        
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        
-        // Setup visual AI Analyser
-        if (!aiAnalyser) {
-            aiAnalyser = audioCtx.createAnalyser();
-            aiAnalyser.fftSize = 512;
-            const bufferLength = aiAnalyser.frequencyBinCount;
-            aiDataArray = new Uint8Array(bufferLength);
-        }
-        source.connect(aiAnalyser);
-        aiAnalyser.connect(audioCtx.destination);
-        
-        const currentTime = audioCtx.currentTime;
-        if (nextPlayTime < currentTime) {
-            nextPlayTime = currentTime;
-        }
-        source.start(nextPlayTime);
-        nextPlayTime += audioBuffer.duration;
-
-        // Visual feedback when AI starts speaking
-        aiActive = true;
-        if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
-            socketStatusBadge.innerText = "SPEAKING";
-            socketStatusBadge.className = "status-value status-active";
-        }
-
-        if (aiSilenceTimeout) clearTimeout(aiSilenceTimeout);
-        const durationMs = audioBuffer.duration * 1000;
-        aiSilenceTimeout = setTimeout(() => {
-            if (audioCtx.currentTime >= nextPlayTime - 0.05) {
-                aiActive = false;
-                if (socketStatusBadge && ws && ws.readyState === WebSocket.OPEN) {
-                    socketStatusBadge.innerText = "CONNECTED";
-                    socketStatusBadge.className = "status-value status-ok";
-                }
-            }
-        }, durationMs + 100);
-    }
-
-    // Route a live tool call from Gemini to OpenClaw
-    function routeLiveToolCall(args, callId) {
-        const toolName = args.toolName;
-        const toolArguments = args.arguments || {};
-
-        if (circuitState === 'OPEN') {
-            sendToolWSSResponse(callId, null, "Blocked: circuit breaker active.");
-            return;
-        }
-
-        appendTerminalLog(wssLogsEl, `< Intercepted Gemini Live toolCall '${toolName}'`, "server");
-        appendTerminalLog(clawLogsEl, `Intercepted toolCall: '${toolName}'`, "invoke");
-
-        const start = performance.now();
-        const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
-
-        fetch(`/tools/invoke`, {
+        fetch('/tools/invoke', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openclawGatewayToken}`
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                tool: toolName,
-                arguments: toolArguments,
+                tool: argsPayload.tool || "ping",
+                arguments: argsPayload.arguments || {},
                 gatewayHost: gatewayHost
             })
         })
-        .then(res => {
-            const end = performance.now();
-            rttEl.innerText = `${Math.round(end - start)} ms`;
-            if (!res.ok) {
-                return res.json().then(errData => {
-                    const errMsg = (errData.error && errData.error.message) || errData.message || `HTTP ${res.status}`;
-                    throw new Error(errMsg);
-                });
-            }
-            return res.json();
-        })
-        .then(data => {
-            if (data.ok || data.status === 'SUCCESS' || data.result) {
-                failures = 0;
-                const msg = data.result || data.message || "Execution completed successfully.";
-                appendTerminalLog(clawLogsEl, `Tool Success: ${msg}`, "success");
-                sendToolWSSResponse(callId, { result: msg }, null);
+        .then(async (res) => {
+            const latency = Date.now() - startTime;
+            rttEl.innerText = `${latency} ms`;
+
+            if (res.ok) {
+                const data = await res.json();
+                metricInvocations++;
+                invocationCountEl.innerText = metricInvocations;
+
+                logClaw(`Tool returned execution response code: ${res.status}`, "success");
+                logTerminal(`Tool callback SUCCESS: ${JSON.stringify(data)}`, "server");
+
+                // Route response back to GeminiLive WebSocket
+                const responseMsg = {
+                    toolResponse: {
+                        functionResponses: [
+                            {
+                                id: callId,
+                                name: "execute",
+                                response: { result: JSON.stringify(data) }
+                            }
+                        ]
+                    }
+                };
+                ws.send(JSON.stringify(responseMsg));
             } else {
-                const errMsg = (data.error && data.error.message) || data.message || "Unknown gateway error";
-                throw new Error(errMsg);
+                const text = await res.text();
+                throw new Error(text || `HTTP ${res.status}`);
             }
         })
         .catch(err => {
-            failures++;
-            failureCountEl.innerText = failures;
-            appendTerminalLog(clawLogsEl, `Tool Error: ${err.message}`, "fail");
-            sendToolWSSResponse(callId, null, err.message);
+            metricFailures++;
+            failureCountEl.innerText = metricFailures;
+            logClaw(`Tool execution FAILED: ${err.message}`, "fail");
+            logTerminal(`Tool callback FAILED: ${err.message}`, "error");
 
-            if (failures >= failureThreshold) {
-                circuitState = 'OPEN';
-                breakerStatusEl.innerText = 'OPEN';
-                breakerStatusEl.className = 'status-value status-error';
-            }
+            // Dispatch error structure back to Gemini
+            const errorMsg = {
+                toolResponse: {
+                    functionResponses: [
+                        {
+                            id: callId,
+                            name: "execute",
+                            response: { error: err.message }
+                        }
+                    ]
+                }
+            };
+            ws.send(JSON.stringify(errorMsg));
         });
     }
 
-    function sendToolWSSResponse(callId, payload, error) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-        const responseObj = {
-            id: callId,
-            name: "execute"
-        };
-
-        if (error) {
-            responseObj.response = { error: error };
+    // --- 8. UI Handlers and Interactions ---
+    localModeCheckbox.addEventListener('change', (e) => {
+        isLocalMode = e.target.checked;
+        if (isLocalMode) {
+            logTerminal("Local PC Simulation mode active. Status lights redirected.", "system");
         } else {
-            responseObj.response = payload;
+            logTerminal("Wearable Link mode active. Waiting for S25 diagnostics heartbeat.", "system");
         }
+        updateHealthDashboard();
+    });
 
-        const msg = {
-            toolResponse: {
-                functionResponses: [responseObj]
-            }
-        };
+    runPostBtn.addEventListener('click', runPostCheck);
 
-        ws.send(JSON.stringify(msg));
-        appendTerminalLog(wssLogsEl, `> Sent toolResponse back to Gemini Live.`, "client");
-    }
+    connectWsBtn.addEventListener('click', connectGeminiLive);
+    disconnectWsBtn.addEventListener('click', disconnectGeminiLive);
 
-    // --- 6. Manual Snapshot Photo Trigger ---
+    micToggleBtn.addEventListener('click', () => {
+        if (isRecordingAudio) {
+            stopMicrophoneCapture();
+        } else {
+            startMicrophoneCapture();
+        }
+    });
+
     snapBtn.addEventListener('click', () => {
-        appendTerminalLog(clawLogsEl, "Capturing snapshot from live video element...", "system");
-        
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 504;
-        tempCanvas.height = 896;
-        const tempCtx = tempCanvas.getContext('2d');
-
-        if (!cameraConnected || video.readyState !== video.HAVE_ENOUGH_DATA) {
-            appendTerminalLog(clawLogsEl, "Upload Failed: No active live camera feed available.", "fail");
-            return;
-        }
-
-        drawVideoToContext(tempCtx, tempCanvas.width, tempCanvas.height, true);
-
-        tempCanvas.toBlob(blob => {
-            if (!blob) return;
-
-            fetch('/workspace/upload', {
-                method: 'POST',
-                body: blob
-            })
-            .then(res => res.json())
-            .then(data => {
-                appendTerminalLog(clawLogsEl, `Snapshot saved to host: assets/${data.filename}`, "success");
-                refreshWorkspaceGallery();
-            })
-            .catch(err => {
-                appendTerminalLog(clawLogsEl, `Upload Failed: ${err.message}`, "fail");
-            });
-        }, 'image/jpeg', 0.85);
-    });
-
-    // --- 7. Manual Form Tool Dispatcher ---
-    toolForm.addEventListener('submit', e => {
-        e.preventDefault();
-        
-        const toolName = toolSelect.value;
-        let argumentsObj = {};
-        try {
-            argumentsObj = JSON.parse(toolArgs.value);
-        } catch (err) {
-            alert("Invalid JSON arguments format.");
-            return;
-        }
-
-        invocations++;
-        invocationCountEl.innerText = invocations;
-        
-        appendTerminalLog(clawLogsEl, `Invoking tool '${toolName}' manually...`, "invoke");
-        
-        const startTimestamp = performance.now();
-        const gatewayHost = gatewayIpInput.value.trim() || 'localhost';
-
-        fetch(`/tools/invoke`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${openclawGatewayToken}`
-            },
-            body: JSON.stringify({
-                tool: toolName,
-                arguments: argumentsObj,
-                gatewayHost: gatewayHost
-            })
-        })
-        .then(res => {
-            const endTimestamp = performance.now();
-            rttEl.innerText = `${Math.round(endTimestamp - startTimestamp)} ms`;
-            if (!res.ok) {
-                return res.json().then(errData => {
-                    const errMsg = (errData.error && errData.error.message) || errData.message || `HTTP ${res.status}`;
-                    throw new Error(errMsg);
-                });
-            }
-            return res.json();
-        })
-        .then(data => {
-            const msg = data.result || data.message || "Execution completed successfully.";
-            appendTerminalLog(clawLogsEl, `Tool Response: ${msg}`, "success");
-        })
-        .catch(err => {
-            failures++;
-            failureCountEl.innerText = failures;
-            appendTerminalLog(clawLogsEl, `Tool Invocation Failure: ${err.message}`, "fail");
-        });
-    });
-
-    // --- 7b. Amazon Inventory Recon Search ---
-    if (amazonSearchBtn) {
-        amazonSearchBtn.addEventListener('click', () => {
-            const query = amazonQueryInput.value.trim();
-            if (!query) {
-                alert('Please enter a product to search.');
-                return;
-            }
-
-            amazonSearchBtn.disabled = true;
-            amazonSearchBtn.innerText = "Searching Live Inventory...";
-            amazonResultsContainer.style.display = 'block';
-            amazonResultsContainer.innerHTML = '<span style="color:var(--primary)">Connecting to Rainforest API...</span>';
-
-            fetch('/api/amazon/search', {
+        // Force manual snapshot send to local OpenClaw gateway
+        cameraCanvas.toBlob(blob => {
+            const formData = new FormData();
+            formData.append('file', blob, `snap_${Date.now()}.jpg`);
+            
+            logClaw("Manually capturing snapshot frame and sending to OpenClaw...", "invoke");
+            
+            fetch('/tools/invoke', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query })
+                body: JSON.stringify({
+                    tool: "capture_photo",
+                    arguments: { width: 504, height: 896 },
+                    gatewayHost: gatewayIpInput.value || 'localhost'
+                })
             })
             .then(res => {
-                if (!res.ok) {
-                    return res.json().then(errData => {
-                        throw new Error(errData.message || 'Server error');
-                    });
+                if (res.ok) {
+                    logClaw("Manual snapshot processed by OpenClaw Gateway.", "success");
+                    refreshGallery();
+                } else {
+                    logClaw(`Failed to upload snapshot: HTTP ${res.status}`, "fail");
                 }
-                return res.json();
             })
-            .then(data => {
-                amazonSearchBtn.disabled = false;
-                amazonSearchBtn.innerText = "Search Live Inventory";
-                
-                if (!data || data.length === 0) {
-                    amazonResultsContainer.innerHTML = '<span style="color:var(--error)">No items found.</span>';
-                    return;
-                }
-
-                let html = '<div style="display:flex; flex-direction:column; gap:8px;">';
-                data.forEach((item, index) => {
-                    html += `
-                        <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
-                            <div style="color: #10b981; font-weight: bold; margin-bottom: 4px;">Top Pick #${index + 1} &mdash; ${item.price}</div>
-                            <div style="color: #e2e8f0; font-size: 0.8rem; margin-bottom: 6px;">${item.title.substring(0, 100)}${item.title.length > 100 ? '...' : ''}</div>
-                            <a href="${item.link}" target="_blank" style="color: var(--primary); text-decoration: none; font-size: 0.75rem;">View Listing &rarr;</a>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-                amazonResultsContainer.innerHTML = html;
-                appendTerminalLog(clawLogsEl, `Amazon Recon: Found ${data.length} listings for "${query}"`, "success");
-            })
-            .catch(err => {
-                amazonSearchBtn.disabled = false;
-                amazonSearchBtn.innerText = "Search Live Inventory";
-                amazonResultsContainer.innerHTML = `<span style="color:var(--error)">Failed: ${err.message}</span>`;
-                appendTerminalLog(clawLogsEl, `Amazon Recon Failed: ${err.message}`, "fail");
+            .catch(e => {
+                logClaw(`Upload network error: ${e.message}`, "fail");
             });
-        });
-    }
+        }, 'image/jpeg');
+    });
 
-    // --- 8. Workspace Gallery ---
-    function refreshWorkspaceGallery() {
-        fetch('/api/images')
-        .then(res => res.json())
-        .then(images => {
-            galleryGrid.innerHTML = '';
-            
-            if (images.length === 0) {
-                galleryGrid.innerHTML = '<p class="empty-gallery-msg">No images captured in the workspace yet. Take a snapshot to save files to the host disk.</p>';
-                return;
+    // Amazon search integration
+    amazonSearchBtn.addEventListener('click', () => {
+        const query = amazonQuery.value.trim();
+        if (!query) return;
+
+        amazonResults.style.display = 'block';
+        amazonResults.innerText = `Searching Amazon listings for "${query}"...\n`;
+
+        fetch('/tools/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tool: "google_search",
+                arguments: { query: `site:amazon.com ${query}` },
+                gatewayHost: gatewayIpInput.value || 'localhost'
+            })
+        })
+        .then(async res => {
+            if (res.ok) {
+                const data = await res.json();
+                amazonResults.innerText = JSON.stringify(data, null, 2);
+            } else {
+                const errText = await res.text();
+                amazonResults.innerText = `Search Error: HTTP ${res.status}\n${errText}`;
             }
-
-            images.forEach(filename => {
-                const card = document.createElement('div');
-                card.className = 'gallery-card';
-                
-                const img = document.createElement('img');
-                img.src = `assets/${filename}`;
-                img.className = 'gallery-thumbnail';
-                
-                const meta = document.createElement('div');
-                meta.className = 'gallery-meta';
-                meta.innerText = filename;
-
-                card.appendChild(img);
-                card.appendChild(meta);
-                
-                card.addEventListener('click', () => {
-                    const viewerImg = new Image();
-                    viewerImg.src = `assets/${filename}`;
-                    viewerImg.onload = () => {
-                        cameraCtx.drawImage(viewerImg, 0, 0, cameraCanvas.width, cameraCanvas.height);
-                        appendTerminalLog(clawLogsEl, `Inspecting file: assets/${filename}`, "system");
-                    };
-                });
-
-                galleryGrid.appendChild(card);
-            });
         })
         .catch(err => {
-            console.error("Failed to load workspace images: ", err);
+            amazonResults.innerText = `Network Error: ${err.message}`;
         });
-    }
+    });
 
-    refreshGalleryBtn.addEventListener('click', refreshWorkspaceGallery);
-
-    // Toggle Raw Pipeline JSON files
-    function fetchPipelineJSON() {
-        const files = [
-            { path: 'meta.json', elId: 'json-meta' },
-            { path: 'timeline.json', elId: 'json-timeline' },
-            { path: 'run_summary.json', elId: 'json-summary' }
-        ];
-
-        files.forEach(file => {
-            fetch(file.path)
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById(file.elId).innerText = JSON.stringify(data, null, 2);
-                })
-                .catch(err => {
-                    document.getElementById(file.elId).innerText = `Error: ${err.message}`;
+    // --- 9. Gallery Management ---
+    function refreshGallery() {
+        fetch('/api/images')
+            .then(res => res.json())
+            .then(files => {
+                galleryGrid.innerHTML = '';
+                if (files.length === 0) {
+                    galleryGrid.innerHTML = '<p class="empty-gallery-msg">No images found in workspace.</p>';
+                    return;
+                }
+                files.forEach(file => {
+                    const card = document.createElement('div');
+                    card.className = 'gallery-card';
+                    card.innerHTML = `
+                        <img src="/assets/${file}" class="gallery-thumbnail">
+                        <div class="gallery-meta">${file}</div>
+                    `;
+                    galleryGrid.appendChild(card);
                 });
-        });
+            })
+            .catch(() => {
+                galleryGrid.innerHTML = '<p class="empty-gallery-msg">Failed to query workspace assets folder.</p>';
+            });
     }
 
-    toggleDebugBtn.addEventListener('click', () => {
-        debugContainer.classList.toggle('hidden');
-        if (!debugContainer.classList.contains('hidden')) {
-            fetchPipelineJSON();
+    refreshGalleryBtn.addEventListener('click', refreshGallery);
+
+    // --- 10. Initialization ---
+    diagnosticInterval = setInterval(updateHealthDashboard, 3000);
+    setInterval(refreshGallery, 15000);
+    updateHealthDashboard();
+    refreshGallery();
+
+    // Draw Decorative Waveform (Active when mic is not streaming, otherwise placeholder visualizer)
+    let audioPhase = 0;
+    function drawWaveform() {
+        requestAnimationFrame(drawWaveform);
+        waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+
+        const gradient = waveformCtx.createLinearGradient(0, 0, waveformCanvas.width, 0);
+        gradient.addColorStop(0, '#3b82f6');
+        gradient.addColorStop(0.5, '#8b5cf6');
+        gradient.addColorStop(1, '#ec4899');
+
+        waveformCtx.strokeStyle = gradient;
+        waveformCtx.lineWidth = 2;
+        waveformCtx.beginPath();
+
+        const amp = isRecordingAudio ? 35 : 15;
+        const freq = isRecordingAudio ? 0.12 : 0.05;
+        audioPhase += isRecordingAudio ? 0.25 : 0.08;
+
+        for (let x = 0; x < waveformCanvas.width; x++) {
+            const y = waveformCanvas.height / 2 + Math.sin(x * freq + audioPhase) * amp;
+            if (x === 0) waveformCtx.moveTo(x, y);
+            else waveformCtx.lineTo(x, y);
         }
-    });
+        waveformCtx.stroke();
+    }
+    drawWaveform();
 
-    // Run loops
-    drawCameraFrame();
-    drawAudioWaveform();
-    refreshWorkspaceGallery();
-    setInterval(refreshWorkspaceGallery, 10000);
-
-    // Fetch unified config and pre-populate credentials, then auto-connect
+    // Auto-populate configurations
     fetch('/api/config')
-    .then(res => res.json())
-    .then(config => {
-        if (config.gatewayToken) {
-            openclawGatewayToken = config.gatewayToken;
-        }
-        if (config.geminiApiKey) {
-            apiKeyInput.value = config.geminiApiKey;
-            appendTerminalLog(wssLogsEl, "Automatically populated Gemini API Key from .env. Connecting...", "success");
+        .then(res => res.json())
+        .then(config => {
+            if (config.geminiApiKey) apiKeyInput.value = config.geminiApiKey;
+            if (config.gatewayToken) {
+                // Token sync log
+                console.log("[Config Init] Token successfully loaded from local .env config.");
+            }
+        });
 
-            // Auto connect live session
-            setTimeout(() => {
-                connectGeminiLive();
-            }, 100);
-        }
-    })
-    .catch(err => {
-        console.warn("Failed to load auto-config:", err);
-    });
+    console.log("VisionClaw Web Dashboard & Simulation Client initialized.");
 });

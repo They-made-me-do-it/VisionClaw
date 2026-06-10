@@ -10,6 +10,12 @@ if (-not (Test-Path $HandoffDir)) {
     New-Item -ItemType Directory -Path $HandoffDir -Force | Out-Null
 }
 
+# 0. Nuclear Cleanup of previous instances
+Write-Host "[INIT] Executing nuclear cleanup of previous node/openclaw instances..." -ForegroundColor Yellow
+taskkill /F /IM node.exe /T 2>$null
+taskkill /F /IM openclaw.exe /T 2>$null
+Start-Sleep -Seconds 2
+
 # Clear old log or create a new one
 "$(Get-Date -Format 'o') [INFO] Starting VisionClaw API Gateway server..." | Out-File -FilePath $LogPath -Encoding utf8
 
@@ -170,6 +176,16 @@ if ($nodeProcess.HasExited) {
 
 Log-Message "Dashboard Server active at: http://localhost:$ServerPort"
 Log-Message "Opening Dashboard in default web browser..."
+
+# Audible announcement using .NET speech synthesizer
+try {
+    Add-Type -AssemblyName System.Speech
+    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    $synth.Speak("Vision Claw host services online. Node server and Open Claw gateway ready.")
+} catch {
+    Log-Warning "Could not initialize System.Speech synthesizer: $_"
+}
+
 Start-Process "http://localhost:$ServerPort"
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor Cyan
