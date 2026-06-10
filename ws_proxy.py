@@ -28,7 +28,10 @@ def load_api_key():
 
 async def handler(websocket):
     # Parse API key from query params or fall back to .env
-    path = websocket.path
+    try:
+        path = websocket.request.path
+    except AttributeError:
+        path = websocket.path
     parsed = urllib.parse.urlparse(path)
     params = urllib.parse.parse_qs(parsed.query)
     api_key_list = params.get('key')
