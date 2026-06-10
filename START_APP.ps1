@@ -176,16 +176,6 @@ if ($nodeProcess.HasExited) {
 
 Log-Message "Dashboard Server active at: http://localhost:$ServerPort"
 Log-Message "Opening Dashboard in default web browser..."
-
-# Audible announcement using .NET speech synthesizer
-try {
-    Add-Type -AssemblyName System.Speech
-    $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    $synth.Speak("Vision Claw host services online. Node server and Open Claw gateway ready.")
-} catch {
-    Log-Warning "Could not initialize System.Speech synthesizer: $_"
-}
-
 Start-Process "http://localhost:$ServerPort"
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor Cyan

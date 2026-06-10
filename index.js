@@ -68,23 +68,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let isRecordingAudio = false;
     let videoTimerId = null;
     let diagnosticInterval = null;
+    let isPostChecking = false;
 
     // Metrics Counter
     let metricInvocations = 0;
     let metricFailures = 0;
-
-    // Speak helper using Web Speech API
-    function speakText(text) {
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-            window.speechSynthesis.speak(utterance);
-        }
-        console.log(`[POST TTS] ${text}`);
-    }
 
     function logTerminal(message, type = 'system') {
         const line = document.createElement('div');
@@ -118,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function runPostCheck() {
         postFeedback.style.display = 'block';
         postFeedback.innerText = "Initializing system self-test...";
-        speakText("Vision Claw Power-On Self Test initiated.");
+        isPostChecking = true;
 
         // Step 1: Check Node Server
         setBadgeStatus(postNode, 'checking', 'state-checking');
@@ -131,13 +119,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (nodeOk) {
             setBadgeStatus(postNode, 'pass', 'state-pass');
-            speakText("Node server online.");
             setLightStatus(lightNode, 'ok');
         } else {
             setBadgeStatus(postNode, 'fail', 'state-fail');
-            speakText("Node server offline.");
             setLightStatus(lightNode, 'error');
             postFeedback.innerText = "POST Failed: Node server unreachable.";
+            isPostChecking = false;
             return;
         }
 
@@ -153,13 +140,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (gatewayOk) {
             setBadgeStatus(postGateway, 'pass', 'state-pass');
-            speakText("Open Claw gateway online.");
             setLightStatus(lightGateway, 'ok');
         } else {
             setBadgeStatus(postGateway, 'fail', 'state-fail');
-            speakText("Open Claw gateway unreachable.");
             setLightStatus(lightGateway, 'error');
             postFeedback.innerText = "POST Failed: OpenClaw gateway offline. Ensure port 18789 is running.";
+            isPostChecking = false;
             return;
         }
 
@@ -169,7 +155,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (isLocalMode) {
             setBadgeStatus(postClient, 'pass', 'state-pass');
-            speakText("Local P C client initialized.");
             setLightStatus(lightPhone, 'ok');
         } else {
             // Check if we have received S25 diagnostics recently
@@ -184,13 +169,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (s25Active) {
                 setBadgeStatus(postClient, 'pass', 'state-pass');
-                speakText("Wearable link active.");
                 setLightStatus(lightPhone, 'ok');
             } else {
                 setBadgeStatus(postClient, 'fail', 'state-fail');
-                speakText("Wearable link disconnected.");
                 setLightStatus(lightPhone, 'error');
                 postFeedback.innerText = "POST Failed: Client device heartbeat not detected. Connect phone or switch to Local PC Mode.";
+                isPostChecking = false;
                 return;
             }
         }
@@ -206,14 +190,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 testStream.getTracks().forEach(t => t.stop()); // close immediately
                 audioInputReady = true;
                 setBadgeStatus(postAudio, 'pass', 'state-pass');
-                speakText("Local microphone verified.");
                 setLightStatus(lightGlasses, 'ok');
             } catch (e) {
                 audioInputReady = false;
                 setBadgeStatus(postAudio, 'fail', 'state-fail');
-                speakText("Microphone access denied.");
                 setLightStatus(lightGlasses, 'error');
                 postFeedback.innerText = "POST Failed: Cannot access microphone.";
+                isPostChecking = false;
                 return;
             }
         } else {
@@ -229,34 +212,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (glassesAudioOk) {
                 setBadgeStatus(postAudio, 'pass', 'state-pass');
-                speakText("Wearable audio routed.");
                 setLightStatus(lightGlasses, 'ok');
             } else {
                 setBadgeStatus(postAudio, 'fail', 'state-fail');
-                speakText("Wearable audio offline.");
                 setLightStatus(lightGlasses, 'error');
                 postFeedback.innerText = "POST Warning: Smart glasses audio not active. Connect audio on device.";
-                // We let it pass with warnings
                 setBadgeStatus(postAudio, 'warn', 'state-checking');
             }
         }
 
-        // Step 5: Check Gemini Live connection
+        // Step 5: Check Gemini Live connection & trigger conversational check-in
         setBadgeStatus(postGemini, 'checking', 'state-checking');
         await new Promise(r => setTimeout(r, 600));
 
         if (isWebsocketConnected) {
             setBadgeStatus(postGemini, 'pass', 'state-pass');
-            speakText("Gemini Live session connected.");
             setLightStatus(lightGemini, 'active');
+            postFeedback.innerText = "POST Passed. Gemini Live connected. Handshake active...";
+            
+            // Automatically engage microphone and ask Gemini to check in
+            isPostChecking = false;
+            await startMicrophoneCapture();
+            const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
+            sendIntroGreeting(handshakePrompt);
         } else {
             setBadgeStatus(postGemini, 'pending', 'state-pending');
-            speakText("Gemini Live offline. Complete the websocket configuration below to connect.");
             setLightStatus(lightGemini, 'off');
+            postFeedback.innerText = "POST Local Checks Passed. Connecting to Gemini Live for voice validation...";
+            await connectGeminiLive();
         }
-
-        speakText("System Power-On Self Test completed successfully.");
-        postFeedback.innerText = "POST Passed. VisionClaw services operational.";
     }
 
     // --- 2. Live Health Checking Loop ---
@@ -376,6 +360,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Print to terminal logs
                 if (response.setupComplete) {
                     logTerminal("< setupComplete payload received.", "server");
+                    
+                    if (isPostChecking) {
+                        isPostChecking = false;
+                        postFeedback.innerText = "POST Passed. Gemini Live connected. Handshake active...";
+                        
+                        // Automatically engage microphone and ask Gemini to check in
+                        setTimeout(async () => {
+                            await startMicrophoneCapture();
+                            const handshakePrompt = "VisionClaw Power-On Self-Test (POST) check completed successfully. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you, and confirm that our two-way audio link is active.";
+                            sendIntroGreeting(handshakePrompt);
+                        }, 800);
+                    } else {
+                        sendIntroGreeting();
+                    }
                 }
 
                 // Handle text transcript display
@@ -439,8 +437,8 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    function sendIntroGreeting() {
-        const prompt = "VisionClaw PC Host Online. Gemini, introducing myself. Confirm audio/video telemetry link active.";
+    function sendIntroGreeting(customPrompt) {
+        const prompt = customPrompt || "VisionClaw PC Host Online. Gemini, introducing myself. Confirm audio/video telemetry link active.";
         const greeting = {
             clientContent: {
                 turns: [
