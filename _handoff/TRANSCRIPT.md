@@ -1095,3 +1095,11 @@ Hello, this is Gemini. Can you hear me?
 
 ---
 
+**[10:25:07 PM] User**: Hello Gemini, this is Session One. Please say the word 'Alpha' and stop.
+
+---
+
+**[10:25:11 PM] User**: Hello Gemini, this is Session Two. Please confirm connection two is active and verify our link.
+
+---
+
