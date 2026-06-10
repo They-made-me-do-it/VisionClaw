@@ -1,3 +1,0 @@
-2026-06-09T19:23:25.357-05:00 [gateway] ⚠️  Gateway is binding to a non-loopback address. Ensure authentication is configured before exposing to public networks.
-2026-06-09T19:23:25.598-05:00 [gateway] security warning: dangerous config flags enabled: tools.fs.workspaceOnly=false. Run `openclaw security audit`.
-2026-06-09T19:23:35.654-05:00 [tools] tools.profile (messaging) allowlist contains unknown entries (ping). These entries won't match any tool unless the plugin is enabled.

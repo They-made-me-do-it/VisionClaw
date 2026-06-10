@@ -10,8 +10,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const lightGlasses = document.getElementById('light-glasses');
 
     // POST Panel Elements
-    const runPostBtn = document.getElementById('run-post-btn');
+    const postOverallStatus = document.getElementById('post-overall-status');
     const localModeCheckbox = document.getElementById('local-mode-checkbox');
+    const defaultLocal = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    localModeCheckbox.checked = defaultLocal;
+
     const postNode = document.getElementById('post-node');
     const postGateway = document.getElementById('post-gateway');
     const postClient = document.getElementById('post-client');
@@ -54,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const amazonResults = document.getElementById('amazon-results');
 
     // State Variables
-    let isLocalMode = false;
+    let isLocalMode = defaultLocal;
     let isWebsocketConnected = false;
     let ws = null;
     let audioCtx = null;
@@ -105,8 +108,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 1. POST (Power-On Self-Test) Logic ---
     async function runPostCheck() {
         postFeedback.style.display = 'block';
-        postFeedback.innerText = "Initializing system self-test...";
+        postFeedback.innerText = "Initializing Power-On Self-Test (POST)...";
         isPostChecking = true;
+        setBadgeStatus(postOverallStatus, 'post: checking', 'state-checking');
 
         // Step 1: Check Node Server
         setBadgeStatus(postNode, 'checking', 'state-checking');
@@ -124,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setBadgeStatus(postNode, 'fail', 'state-fail');
             setLightStatus(lightNode, 'error');
             postFeedback.innerText = "POST Failed: Node server unreachable.";
+            setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
             isPostChecking = false;
             return;
         }
@@ -145,6 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setBadgeStatus(postGateway, 'fail', 'state-fail');
             setLightStatus(lightGateway, 'error');
             postFeedback.innerText = "POST Failed: OpenClaw gateway offline. Ensure port 18789 is running.";
+            setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
             isPostChecking = false;
             return;
         }
@@ -174,6 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setBadgeStatus(postClient, 'fail', 'state-fail');
                 setLightStatus(lightPhone, 'error');
                 postFeedback.innerText = "POST Failed: Client device heartbeat not detected. Connect phone or switch to Local PC Mode.";
+                setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
                 isPostChecking = false;
                 return;
             }
@@ -196,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setBadgeStatus(postAudio, 'fail', 'state-fail');
                 setLightStatus(lightGlasses, 'error');
                 postFeedback.innerText = "POST Failed: Cannot access microphone.";
+                setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
                 isPostChecking = false;
                 return;
             }
@@ -228,7 +236,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isWebsocketConnected) {
             setBadgeStatus(postGemini, 'pass', 'state-pass');
             setLightStatus(lightGemini, 'active');
-            postFeedback.innerText = "POST Passed. Gemini Live connected. Handshake active...";
+            postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake complete.";
+            setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
             
             // Automatically engage microphone and ask Gemini to check in
             isPostChecking = false;
@@ -363,7 +372,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     if (isPostChecking) {
                         isPostChecking = false;
-                        postFeedback.innerText = "POST Passed. Gemini Live connected. Handshake active...";
+                        postFeedback.innerText = "POST Passed. Gemini Live connected. Voice handshake active...";
+                        setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
                         
                         // Automatically engage microphone and ask Gemini to check in
                         setTimeout(async () => {
@@ -763,7 +773,15 @@ document.addEventListener('DOMContentLoaded', () => {
         updateHealthDashboard();
     });
 
-    runPostBtn.addEventListener('click', runPostCheck);
+    // Auto-resume AudioContext on first document interaction to bypass autoplay restrictions
+    document.addEventListener('click', async () => {
+        if (audioCtx && audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+            logTerminal("AudioContext resumed via user interaction.", "system");
+        }
+    });
+
+    postOverallStatus.addEventListener('click', runPostCheck);
 
     connectWsBtn.addEventListener('click', connectGeminiLive);
     disconnectWsBtn.addEventListener('click', disconnectGeminiLive);
@@ -899,7 +917,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     drawWaveform();
 
-    // Auto-populate configurations
+    // Auto-populate configurations and run Power-On Self-Test (POST) automatically on load
     fetch('/api/config')
         .then(res => res.json())
         .then(config => {
@@ -908,6 +926,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Token sync log
                 console.log("[Config Init] Token successfully loaded from local .env config.");
             }
+            
+            // Execute POST immediately on page boot
+            runPostCheck();
         });
 
     console.log("VisionClaw Web Dashboard & Simulation Client initialized.");
