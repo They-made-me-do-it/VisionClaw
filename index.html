@@ -11,6 +11,14 @@
     <link rel="stylesheet" href="index.css">
 </head>
 <body>
+    <div id="startup-overlay" class="startup-overlay">
+        <div class="startup-content">
+            <div class="startup-pulse"></div>
+            <h1 style="font-size: 1.8rem; font-weight: 800; background: linear-gradient(135deg, #fff 0%, var(--text-secondary) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Initialize VisionClaw</h1>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.5;">To satisfy browser security policies, authorize audio telemetry playback before running the Power-On Self-Test (POST) check.</p>
+            <button id="start-post-btn" class="btn btn-connect" style="font-size: 1rem; padding: 0.75rem 2rem; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); width: auto; cursor: pointer; border: none; border-radius: 8px; font-weight: bold; color: white;">Authorize & Run POST</button>
+        </div>
+    </div>
     <div class="glow-container">
         <div class="glow-orb orb-primary"></div>
         <div class="glow-orb orb-secondary"></div>

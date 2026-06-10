@@ -950,19 +950,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     drawWaveform();
 
-    // Auto-populate configurations and run Power-On Self-Test (POST) automatically on load
-    fetch('/api/config')
-        .then(res => res.json())
-        .then(config => {
-            if (config.geminiApiKey) apiKeyInput.value = config.geminiApiKey;
-            if (config.gatewayToken) {
-                // Token sync log
-                console.log("[Config Init] Token successfully loaded from local .env config.");
-            }
-            
-            // Execute POST immediately on page boot
-            runPostCheck();
-        });
+    // Handle startup overlay and direct gesture for AudioContext initialization
+    const startPostBtn = document.getElementById('start-post-btn');
+    const startupOverlay = document.getElementById('startup-overlay');
+
+    startPostBtn.addEventListener('click', async () => {
+        // Initialize Web Audio Context from direct click to bypass browser autoplay blocks
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            await audioCtx.resume();
+            logTerminal("AudioContext initialized & resumed successfully via direct user gesture.", "system");
+        } catch (e) {
+            logTerminal(`Failed to initialize AudioContext: ${e.message}`, "error");
+        }
+
+        // Hide overlay
+        startupOverlay.classList.add('hidden');
+
+        // Fetch configurations and run Power-On Self-Test (POST)
+        fetch('/api/config')
+            .then(res => res.json())
+            .then(config => {
+                if (config.geminiApiKey) apiKeyInput.value = config.geminiApiKey;
+                if (config.gatewayToken) {
+                    console.log("[Config Init] Token successfully loaded from local .env config.");
+                }
+                
+                // Run diagnostic check sequence
+                runPostCheck();
+            });
+    });
 
     console.log("VisionClaw Web Dashboard & Simulation Client initialized.");
 });
