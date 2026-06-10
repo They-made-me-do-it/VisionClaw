@@ -764,6 +764,13 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // Clean up any existing microphone capture to prevent multiple concurrent tracks
+        if (micStream || processorNode) {
+            try {
+                stopMicrophoneCapture();
+            } catch(e) {}
+        }
+
         try {
             micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(micStream);
@@ -776,6 +783,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             processorNode.onaudioprocess = (e) => {
                 if (!isWebsocketConnected) return;
+
+                // Silence output buffer to prevent microphone feedback loopback
+                const outputBuffer = e.outputBuffer.getChannelData(0);
+                outputBuffer.fill(0);
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 
@@ -889,6 +900,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 6. Camera Snapshots & Simulated Ingestion Pipeline (1 FPS) ---
     async function startCameraPipeline() {
+        // Clean up any existing camera stream/pipeline to prevent duplicate frames/intervals
+        if (cameraStream) {
+            try {
+                cameraStream.getTracks().forEach(t => t.stop());
+            } catch(e) {}
+            cameraStream = null;
+        }
+        if (activeVideoElement) {
+            try {
+                activeVideoElement.pause();
+                activeVideoElement.srcObject = null;
+                document.body.removeChild(activeVideoElement);
+            } catch(e) {}
+            activeVideoElement = null;
+        }
+        if (videoTimerId) {
+            clearInterval(videoTimerId);
+            videoTimerId = null;
+        }
+
         // Try getting webcam stream with compatible landscape dimensions
         try {
             cameraStream = await navigator.mediaDevices.getUserMedia({ 
