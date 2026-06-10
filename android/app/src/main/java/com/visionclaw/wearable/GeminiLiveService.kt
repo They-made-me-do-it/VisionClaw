@@ -258,6 +258,7 @@ public class GeminiLiveService private constructor() {
         val turns = JSONArray()
         turns.put(turn)
         clientContent.put("turns", turns)
+        clientContent.put("turnComplete", true)
         
         val clientMessage = JSONObject()
         clientMessage.put("clientContent", clientContent)

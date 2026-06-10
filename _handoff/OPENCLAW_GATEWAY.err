@@ -1,0 +1,4 @@
+2026-06-09T20:52:37.466-05:00 [gateway] ⚠️  Gateway is binding to a non-loopback address. Ensure authentication is configured before exposing to public networks.
+2026-06-09T20:52:37.845-05:00 [gateway] security warning: dangerous config flags enabled: tools.fs.workspaceOnly=false. Run `openclaw security audit`.
+2026-06-09T20:52:41.174-05:00 [fetch-timeout] fetch timeout after 2500ms (elapsed 2509ms) operation=fetchWithTimeout url=https://registry.npmjs.org/openclaw/latest
+2026-06-09T20:52:43.640-05:00 [tools] tools.profile (messaging) allowlist contains unknown entries (ping). These entries won't match any tool unless the plugin is enabled.

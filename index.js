@@ -481,7 +481,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         role: "user",
                         parts: [{ text: prompt }]
                     }
-                ]
+                ],
+                turnComplete: true
             }
         };
         ws.send(JSON.stringify(greeting));
