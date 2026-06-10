@@ -14,6 +14,8 @@ if (-not (Test-Path $HandoffDir)) {
 Write-Host "[INIT] Executing nuclear cleanup of previous node/openclaw instances..." -ForegroundColor Yellow
 taskkill /F /IM node.exe /T 2>$null
 taskkill /F /IM openclaw.exe /T 2>$null
+# Kill any local ws_proxy.py python processes
+Get-CimInstance Win32_Process -Filter "Name = 'python.exe' AND CommandLine LIKE '%ws_proxy.py%'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Seconds 2
 
 # Clear old log or create a new one
@@ -164,7 +166,14 @@ if ($gatewayIsRunningHealthy) {
     Log-Message "OpenClaw Gateway successfully started (PID: $($gatewayProcess.Id)). Log: $gatewayLog"
 }
 
-# 6. Start Dashboard Server (Node.js)
+# 6. Start WebSocket Proxy (ws_proxy.py)
+Log-Message "Starting local WebSocket proxy (ws_proxy.py)..."
+$proxyLog = Join-Path $HandoffDir "WS_PROXY.log"
+$proxyErr = Join-Path $HandoffDir "WS_PROXY_ERR.log"
+$proxyProcess = Start-Process -FilePath "python" -ArgumentList "ws_proxy.py" -RedirectStandardOutput $proxyLog -RedirectStandardError $proxyErr -NoNewWindow -PassThru
+Start-Sleep -Seconds 1
+
+# 7. Start Dashboard Server (Node.js)
 Log-Message "Starting backend Node.js server (server.js)..."
 $nodeProcess = Start-Process -FilePath "node" -ArgumentList "server.js" -NoNewWindow -PassThru
 Start-Sleep -Seconds 2
@@ -305,6 +314,10 @@ finally {
     if ($gatewayProcess -and -not $gatewayProcess.HasExited) {
         Log-Message "Terminating background OpenClaw Gateway server..."
         Stop-Process -Id $gatewayProcess.Id -Force
+    }
+    if ($proxyProcess -and -not $proxyProcess.HasExited) {
+        Log-Message "Terminating background WebSocket proxy..."
+        Stop-Process -Id $proxyProcess.Id -Force
     }
     Log-Message "Shutdown clean and complete."
 }

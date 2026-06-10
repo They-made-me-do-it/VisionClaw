@@ -431,7 +431,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 logTerminal(`Failed to initialize AudioContext: ${e.message}`, "error");
             }
 
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(apiKey)}`;
+            // Connect via our local WebSocket proxy on port 18791 to bypass browser Origin-based key checks (Code 1008)
+            const wsUrl = `ws://localhost:18791?key=${encodeURIComponent(apiKey)}`;
 
             try {
                 ws = new WebSocket(wsUrl);

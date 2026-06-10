@@ -246,7 +246,7 @@ public class GeminiLiveService private constructor() {
     }
 
     private fun sendIntroductionPrompt() {
-        val prompt = "VisionClaw System Handshake. Gemini, please introduce yourself and ask me for acknowledgment."
+        val prompt = "VisionClaw System Handshake. Gemini, please check in with the user by asking them in a friendly, conversational tone if they can hear you. Stop speaking immediately after asking, wait for their voice response, and if you can hear them back, confirm to them that our two-way audio link is verified and fully operational."
         
         val turn = JSONObject()
         turn.put("role", "user")
