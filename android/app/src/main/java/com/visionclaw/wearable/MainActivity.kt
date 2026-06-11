@@ -162,7 +162,22 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         client.newCall(request).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: IOException) {}
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {}
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                response.use { resp ->
+                    if (resp.isSuccessful) {
+                        val b = resp.body?.string()
+                        if (b != null) {
+                            try {
+                                val json = JSONObject(b)
+                                if (json.has("averageRtt")) {
+                                    val avgRtt = json.getDouble("averageRtt")
+                                    VideoPipeline.shared.updateRttMetric(avgRtt)
+                                }
+                            } catch (e: Exception) {}
+                        }
+                    }
+                }
+            }
         })
     }
 
@@ -186,6 +201,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         speak("Connecting.")
         audioManager?.configureBluetoothSCO()
 
+        // Set up OpenClawToolRouter dynamically
+        val gatewayIp = gatewayIpInput.text.toString().trim()
+        if (gatewayIp.isNotEmpty()) {
+            OpenClawToolRouter.shared.gatewayIP = gatewayIp
+        }
+        val gatewayToken = gatewayTokenInput.text.toString().trim()
+        if (gatewayToken.isNotEmpty()) {
+            OpenClawToolRouter.shared.bearerToken = gatewayToken
+        }
+
+        // Wire up VideoPipeline frame callback to stream egocentric frames to WSS
+        VideoPipeline.shared.onFrameProcessed = { base64Frame ->
+            if (isGeminiActive) {
+                GeminiLiveService.shared.sendMediaChunk("image/jpeg", base64Frame)
+            }
+        }
+        VideoPipeline.shared.initialize(this, DATDeviceSession(), DATVideoStream())
+
         GeminiLiveService.shared.connect(apiKey)
         isGeminiActive = true
         statusText.text = "Status: Connecting..."
@@ -200,6 +233,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun stopGeminiSession() {
         isGeminiActive = false
+        VideoPipeline.shared.onFrameProcessed = null
+        VideoPipeline.shared.stopSessionProactively()
         GeminiLiveService.shared.disconnect()
         audioManager?.stopRecording()
         statusText.text = "Status: Idle"

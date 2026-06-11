@@ -6,6 +6,9 @@ package com.visionclaw.wearable
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import java.io.IOException
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
@@ -250,6 +253,7 @@ public class MainActivity : Activity() {
             })
         }
         openClawDiscovery?.startDiscovery()
+        startDiagnosticLoop()
     }
 
     private fun toggleGeminiLive() {
@@ -325,7 +329,7 @@ public class MainActivity : Activity() {
             }
         }
         // Initialize DAT stream (using mock references matching SDK 0.7.0 lifecycle API)
-        VideoPipeline.shared.initializeDATStream(DATDeviceSession(), DATVideoStream())
+        VideoPipeline.shared.initialize(this, DATDeviceSession(), DATVideoStream())
 
         if (activeBackend == "Gemini Live") {
             // 3. Connect the websocket
@@ -423,6 +427,53 @@ public class MainActivity : Activity() {
         }
         VideoPipeline.shared.stopSessionProactively()
         System.out.println("[MainActivity] Paused. Releasing hardware locks to avoid resource contention.")
+    }
+
+    private fun startDiagnosticLoop() {
+        val handler = Handler(Looper.getMainLooper())
+        handler.post(object : Runnable {
+            override fun run() {
+                sendDiagnosticReport()
+                handler.postDelayed(this, 10000)
+            }
+        })
+    }
+
+    private fun sendDiagnosticReport() {
+        val report = org.json.JSONObject()
+        report.put("timestamp", System.currentTimeMillis())
+        report.put("isGeminiActive", isGeminiActive)
+        report.put("isGeminiSetupComplete", GeminiLiveService.shared.isSetupComplete)
+        report.put("isWebRTCActive", isWebRTCActive)
+        report.put("connectionType", "USB_TUNNEL_V19_TTS")
+
+        val client = okhttp3.OkHttpClient()
+        val body = okhttp3.RequestBody.create(null, report.toString())
+        val host = OpenClawToolRouter.shared.gatewayIP
+        val request = okhttp3.Request.Builder()
+            .url("http://$host:18790/api/diagnostics")
+            .post(body)
+            .build()
+
+        client.newCall(request).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {}
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                response.use { resp ->
+                    if (resp.isSuccessful) {
+                        val bodyString = resp.body?.string() ?: ""
+                        try {
+                            val json = org.json.JSONObject(bodyString)
+                            if (json.has("averageRtt")) {
+                                val avgRtt = json.getDouble("averageRtt")
+                                VideoPipeline.shared.updateRttMetric(avgRtt)
+                            }
+                        } catch (e: Exception) {
+                            System.err.println("[MainActivity] Failed to parse averageRtt: ${e.message}")
+                        }
+                    }
+                }
+            }
+        })
     }
 
     override fun onDestroy() {

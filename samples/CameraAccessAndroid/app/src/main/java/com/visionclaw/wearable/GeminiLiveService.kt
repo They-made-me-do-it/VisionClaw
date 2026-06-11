@@ -273,7 +273,15 @@ public class GeminiLiveService private constructor() {
                     consecutiveFailures++
                     System.err.println("[GeminiLiveService] Tool failure logged ($consecutiveFailures/$failureThreshold)")
                     
-                    if (consecutiveFailures >= failureThreshold) {
+                    val isSecurityThreat = result.contains("403") || 
+                                           result.contains("SECURITY_THREAT_DETECTED") || 
+                                           result.contains("SecurityException")
+                    if (isSecurityThreat) {
+                        circuitTripped = true
+                        circuitTrippedTime = System.currentTimeMillis()
+                        System.err.println("[GeminiLiveService] Security threat detected in tool call response! Tripping circuit breaker and disconnecting session.")
+                        disconnect()
+                    } else if (consecutiveFailures >= failureThreshold) {
                         circuitTripped = true
                         circuitTrippedTime = System.currentTimeMillis()
                         System.err.println("[GeminiLiveService] WARNING: Circuit breaker tripped! Halting further queries.")

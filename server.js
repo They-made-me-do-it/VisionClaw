@@ -15,6 +15,56 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 let latestDiagnosticReport = null;
 let voiceCheckStatus = "PENDING"; // State: "PENDING", "PASS", "FAIL"
 
+// Rolling average RTT variables
+let toolRttHistory = [];
+const RTT_HISTORY_LIMIT = 5;
+
+function addToolRtt(rttValue) {
+    toolRttHistory.push(rttValue);
+    if (toolRttHistory.length > RTT_HISTORY_LIMIT) {
+        toolRttHistory.shift();
+    }
+}
+
+function getAverageRtt() {
+    if (toolRttHistory.length === 0) return 15.0; // default low baseline RTT
+    const sum = toolRttHistory.reduce((a, b) => a + b, 0);
+    return sum / toolRttHistory.length;
+}
+
+// Security Threat Checker
+function checkThreats(value) {
+    if (typeof value === 'string') {
+        // 1. Command injection operators
+        const shellOperators = /[;&|`]|(\$\()/;
+        if (shellOperators.test(value)) {
+            return "Command injection operators detected";
+        }
+        // 2. Directory traversal
+        if (value.includes('../') || value.includes('..\\')) {
+            return "Directory traversal escape sequence detected";
+        }
+        // 3. Administrative keywords / privilege flags
+        const adminRegex = /\b(sudo|admin|root|--privileged)\b/i;
+        if (adminRegex.test(value)) {
+            return "Administrative privilege command or parameter detected";
+        }
+        // 4. Sensitive system paths
+        const systemPathRegex = /(\/etc\/passwd|\/etc\/shadow|c:\\windows|c:\\system32)/i;
+        if (systemPathRegex.test(value)) {
+            return "Sensitive system path access attempt detected";
+        }
+    } else if (typeof value === 'object' && value !== null) {
+        for (const key in value) {
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                const threat = checkThreats(value[key]);
+                if (threat) return threat;
+            }
+        }
+    }
+    return null;
+}
+
 // Load and parse d:\Meta\.env configuration file
 const envPath = path.join(__dirname, '.env');
 let envConfig = {};
@@ -91,7 +141,7 @@ const server = http.createServer((req, res) => {
                 fs.appendFileSync(logFile, body + '\n');
                 console.log(`[DIAGNOSTICS] Received report from S25`);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ status: 'RECEIVED' }));
+                res.end(JSON.stringify({ status: 'RECEIVED', averageRtt: getAverageRtt() }));
             } catch (e) {
                 res.writeHead(400);
                 res.end();
@@ -341,6 +391,14 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             try {
                 const payload = JSON.parse(body);
+                const threatReason = checkThreats(payload);
+                if (threatReason) {
+                    const logFile = path.join(__dirname, '_handoff', 'ERRORS.log');
+                    fs.appendFileSync(logFile, `${new Date().toISOString()} [FATAL] [SECURITY_ALERT] Blocked Amazon Recon due to: ${threatReason}. Payload: ${body}\n`);
+                    res.writeHead(403, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: "SECURITY_THREAT_DETECTED", reason: threatReason }));
+                }
+
                 const query = payload.query || '';
                 if (!query) {
                     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -353,6 +411,7 @@ const server = http.createServer((req, res) => {
                     return res.end(JSON.stringify({ error: "SERPAPI_API_KEY is not configured" }));
                 }
 
+                const startTime = Date.now();
                 const serpUrl = `https://serpapi.com/search?engine=google&q=site:amazon.com+${encodeURIComponent(query)}&api_key=${apiKey}`;
 
                 const serpReq = https.get(serpUrl, { timeout: 10000 }, (serpRes) => {
@@ -369,6 +428,7 @@ const server = http.createServer((req, res) => {
                                 link: item.link
                             }));
 
+                            addToolRtt(Date.now() - startTime);
                             res.writeHead(200, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({
                                 status: "success",
@@ -376,6 +436,7 @@ const server = http.createServer((req, res) => {
                                 message: `Found ${topItems.length} matching items on Amazon via SerpApi.`
                             }));
                         } catch (e) {
+                            addToolRtt(10000);
                             res.writeHead(500, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({ error: "Failed to parse SerpApi response" }));
                         }
@@ -383,12 +444,14 @@ const server = http.createServer((req, res) => {
                 });
 
                 serpReq.on('timeout', () => {
+                    addToolRtt(10000);
                     serpReq.destroy();
                     res.writeHead(504, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ error: "SerpApi request timed out after 10 seconds." }));
                 });
 
                 serpReq.on('error', (err) => {
+                    addToolRtt(10000);
                     res.writeHead(502, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ error: `SerpApi connection error: ${err.message}` }));
                 });
@@ -409,6 +472,15 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             try {
                 const payload = JSON.parse(body);
+                const threatReason = checkThreats(payload);
+                if (threatReason) {
+                    const logFile = path.join(__dirname, '_handoff', 'ERRORS.log');
+                    fs.appendFileSync(logFile, `${new Date().toISOString()} [FATAL] [SECURITY_ALERT] Blocked tool execution due to: ${threatReason}. Payload: ${body}\n`);
+                    res.writeHead(403, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: "SECURITY_THREAT_DETECTED", reason: threatReason }));
+                }
+
+                const startTime = Date.now();
                 const gatewayHost = payload.gatewayHost || 'localhost';
                 const gatewayPort = 18789;
 
@@ -422,10 +494,12 @@ const server = http.createServer((req, res) => {
                         'Authorization': `Bearer ${envConfig['OPENCLAW_GATEWAY_TOKEN'] || ''}`
                     }
                 }, (proxyRes) => {
+                    addToolRtt(Date.now() - startTime);
                     res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' });
                     proxyRes.pipe(res);
                 });
                 proxyReq.on('error', () => {
+                    addToolRtt(10000);
                     res.writeHead(502);
                     res.end(JSON.stringify({ error: 'Gateway unreachable' }));
                 });

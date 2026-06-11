@@ -113,6 +113,22 @@ document.addEventListener('DOMContentLoaded', () => {
     let metricInvocations = 0;
     let metricFailures = 0;
 
+    let isBreakerOpen = false;
+
+    function tripCircuitBreaker(reason) {
+        isBreakerOpen = true;
+        const breakerStatusEl = document.getElementById('breaker-status');
+        if (breakerStatusEl) {
+            breakerStatusEl.innerText = "OPEN";
+            breakerStatusEl.className = "status-value status-error";
+        }
+        logClaw(`[SECURITY CRITICAL] Circuit Breaker tripped to OPEN due to: ${reason}`, "fail");
+        logTerminal(`[SECURITY CRITICAL] Circuit Breaker tripped to OPEN due to: ${reason}`, "error");
+        
+        // Immediately drop WebSocket connection
+        disconnectGeminiLive();
+    }
+
     function logTerminal(message, type = 'system') {
         if (type === 'error' || type === 'uncaught_error') {
             console.error(`[Terminal Error] ${message}`);
@@ -1330,6 +1346,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 7. Gemini Tool Delegation to Local OpenClaw Gateway ---
     function handleGeminiToolCall(argsPayload, callId, gatewayHost, originalToolName = "execute") {
+        if (isBreakerOpen) {
+            logTerminal(`[Tool Dispatch] Intercepted callId: ${callId}. Blocked: Circuit Breaker is OPEN.`, "error");
+            logClaw(`Execution request blocked: Circuit Breaker is OPEN.`, "fail");
+            // Send tool response failure back to Gemini
+            const errorMsg = {
+                toolResponse: {
+                    functionResponses: [
+                        {
+                            id: callId,
+                            name: originalToolName,
+                            response: { error: "Circuit Breaker is OPEN due to a security violation." }
+                        }
+                    ]
+                }
+            };
+            ws.send(JSON.stringify(errorMsg));
+            return;
+        }
+
         logTerminal(`[Tool Dispatch] Intercepted callId: ${callId}. Routing: ${JSON.stringify(argsPayload)}`, "client");
         logClaw(`Proxying execution request...`, "invoke");
 
@@ -1351,6 +1386,14 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(async (res) => {
             const latency = Date.now() - startTime;
             rttEl.innerText = `${latency} ms`;
+
+            if (res.status === 403) {
+                const data = await res.json();
+                if (data.error === "SECURITY_THREAT_DETECTED") {
+                    tripCircuitBreaker(data.reason);
+                    throw new Error("SECURITY_THREAT_DETECTED: " + data.reason);
+                }
+            }
 
             if (res.ok) {
                 const data = await res.json();
