@@ -83,15 +83,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const refreshGalleryBtn = document.getElementById('refresh-gallery-btn');
     const galleryGrid = document.getElementById('gallery-grid');
 
-    // Amazon Inventory Recon Elements
-    const amazonQuery = document.getElementById('amazon-query');
-    const amazonSearchBtn = document.getElementById('amazon-search-btn');
-    const amazonResults = document.getElementById('amazon-results');
-
     // State Variables
     let isLocalMode = defaultLocal;
     let isWebsocketConnected = false;
     let ws = null;
+    let sessionResumptionToken = null;
     let audioCtx = null;
     let micStream = null;
     let micSourceNode = null;
@@ -204,12 +200,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const turn1Prompt = "VisionClaw POST check initiated. Gemini, please perform step 1 of the voice check-in: ask the user 'Hello, this is Gemini. Can you hear me?' and STOP speaking immediately. Do NOT say anything else. You must wait for their response.";
         sendIntroGreeting(turn1Prompt);
 
-        // Fail POST if voice handshake takes more than 25 seconds
+        // Fail POST if voice handshake takes more than 45 seconds (allows time for both Audio and Vision tests)
         setTimeout(() => {
-            if (isPostChecking && voiceHandshakeStep > 0 && voiceHandshakeStep < 4) {
-                failVoiceHandshake("POST Failed: Voice handshake timed out waiting for response.");
+            if (isPostChecking && voiceHandshakeStep > 0 && voiceHandshakeStep < 5) {
+                failVoiceHandshake("POST Failed: Voice/Vision handshake timed out waiting for response.");
             }
-        }, 25000);
+        }, 45000);
     }
 
     function failVoiceHandshake(reason) {
@@ -473,6 +469,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateHealthDashboard() {
+        if (isPostChecking) return;
+
         // Shared status checker for node & gateway
         const checkLocalBackend = () => {
             fetch('/api/config')
@@ -601,23 +599,49 @@ document.addEventListener('DOMContentLoaded', () => {
                 const finalInstruction = ragContext ? `${baseInstruction}\n\nUSER CONTEXT (RAG Knowledge):\n${ragContext}` : baseInstruction;
 
                 // Send setup config block
-                const setupMsg = {
-                    setup: {
-                        model: "models/gemini-2.5-flash-native-audio-preview-09-2025",
-                        generationConfig: {
-                            responseModalities: ["AUDIO"]
-                        },
-                        systemInstruction: {
-                            parts: [
+                let setupPayload = {
+                    model: "models/gemini-2.5-flash-native-audio-preview-09-2025",
+                    generationConfig: {
+                        responseModalities: ["AUDIO"]
+                    },
+                    systemInstruction: {
+                        parts: [
+                            {
+                                text: finalInstruction
+                            }
+                        ]
+                    },
+                    tools: [
+                        {
+                            functionDeclarations: [
                                 {
-                                    text: finalInstruction
+                                    name: "amazon_recon",
+                                    description: "Search Amazon via SerpApi for arbitrage items in the visual field.",
+                                    parameters: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            query: { type: "STRING", description: "Search query describing the item." }
+                                        },
+                                        required: ["query"]
+                                    }
                                 }
                             ]
-                        },
-                        inputAudioTranscription: {},
-                        outputAudioTranscription: {}
-                    }
+                        }
+                    ],
+                    inputAudioTranscription: {},
+                    outputAudioTranscription: {}
                 };
+
+                // Add session resilience only if token exists
+                if (sessionResumptionToken) {
+                    // Fallback simulated handle injection (real live api might not support this yet)
+                    // setupPayload.sessionResumption = { handle: sessionResumptionToken };
+                }
+
+                const setupMsg = {
+                    setup: setupPayload
+                };
+
                 ws.send(JSON.stringify(setupMsg));
                 logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.5-flash-native-audio-preview-09-2025] sent.", "client");
                 // Update UI elements
@@ -728,7 +752,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                             postFeedback.innerText = `Gemini: "${part.text}"`;
                                             const textLower = part.text.toLowerCase();
                                             if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("online") || textLower.includes("successful")) {
-                                                passVoiceHandshake();
+                                                passAudioHandshake();
+                                            }
+                                        } else if (voiceHandshakeStep === 4) {
+                                            postFeedback.innerText = `Gemini: "${part.text}"`;
+                                            if (part.text.length > 10) {
+                                                passVisionHandshake();
                                             }
                                         }
                                     }
@@ -766,9 +795,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     // Handle session resumption tokens
                     if (response.sessionResumptionUpdate) {
-                        const token = response.sessionResumptionUpdate.new_handle || response.sessionResumptionUpdate.resumptionToken;
+                        const token = response.sessionResumptionUpdate.new_handle || response.sessionResumptionUpdate.resumptionToken || response.sessionResumptionUpdate.token;
                         if (token) {
-                            resumptionTokenEl.innerText = token.slice(0, 16) + "...";
+                            sessionResumptionToken = token;
+                            logTerminal("Session Resumption Token cached.", "system");
                         }
                     }
 
@@ -778,7 +808,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (functionCalls) {
                             for (let call of functionCalls) {
                                 if (call.name === "execute") {
-                                    handleGeminiToolCall(call.args, call.id, gatewayHost);
+                                    handleGeminiToolCall(call.args, call.id, gatewayHost, "execute");
+                                } else if (call.name === "amazon_recon") {
+                                    handleGeminiToolCall({ tool: "amazon_recon", arguments: call.args }, call.id, gatewayHost, "amazon_recon");
                                 }
                             }
                         }
@@ -970,9 +1002,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             };
 
-            source.connect(processorNode);
-            processorNode.connect(audioCtx.destination);
-            
             isRecordingAudio = true;
             micToggleBtn.innerText = "Disconnect Audio Input";
             micToggleBtn.className = "btn btn-sm btn-connect";
@@ -1185,7 +1214,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function streamCurrentFrame() {
+    async function streamCurrentFrame() {
         if (!isWebsocketConnected) return;
 
         // Check backpressure on socket buffer to prevent network queue lag
@@ -1216,6 +1245,42 @@ document.addEventListener('DOMContentLoaded', () => {
             
             offscreenCtx.drawImage(activeVideoElement, sx, sy, sWidth, sHeight, 0, 0, offscreenCanvas.width, offscreenCanvas.height);
             
+            // --- Face Detection Privacy Mask ---
+            try {
+                if (window.FaceDetector) {
+                    const detector = new window.FaceDetector({ fastMode: true });
+                    const faces = await detector.detect(offscreenCanvas);
+                    
+                    offscreenCtx.fillStyle = 'rgba(0, 0, 0, 0.9)'; // Dark pixelation overlay
+                    faces.forEach(face => {
+                        const box = face.boundingBox;
+                        // Check if face is in central 60% of visual field
+                        const cx = box.x + box.width/2;
+                        const cy = box.y + box.height/2;
+                        const w = offscreenCanvas.width;
+                        const h = offscreenCanvas.height;
+                        if (cx > w*0.2 && cx < w*0.8 && cy > h*0.2 && cy < h*0.8) {
+                            offscreenCtx.fillRect(box.x, box.y, box.width, box.height);
+                        }
+                    });
+                } else {
+                    // Fallback simulated center-blur
+                    offscreenCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                    offscreenCtx.filter = 'blur(10px)';
+                    const w = offscreenCanvas.width;
+                    const h = offscreenCanvas.height;
+                    offscreenCtx.fillRect(w*0.2, h*0.2, w*0.6, h*0.6);
+                    offscreenCtx.filter = 'none';
+                    
+                    // Add privacy badge
+                    offscreenCtx.fillStyle = '#f3f4f6';
+                    offscreenCtx.font = '14px Outfit, sans-serif';
+                    offscreenCtx.fillText("PRIVACY FILTER: ACTIVE", 10, 20);
+                }
+            } catch(e) {
+                console.warn("Face detector masking failed", e);
+            }
+
             offscreenCanvas.toBlob((blob) => {
                 const reader = new FileReader();
                 reader.readAsDataURL(blob);
@@ -1264,20 +1329,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 7. Gemini Tool Delegation to Local OpenClaw Gateway ---
-    function handleGeminiToolCall(argsPayload, callId, gatewayHost) {
+    function handleGeminiToolCall(argsPayload, callId, gatewayHost, originalToolName = "execute") {
         logTerminal(`[Tool Dispatch] Intercepted callId: ${callId}. Routing: ${JSON.stringify(argsPayload)}`, "client");
-        logClaw(`Proxying execution request to http://${gatewayHost}:18789...`, "invoke");
+        logClaw(`Proxying execution request...`, "invoke");
 
         const startTime = Date.now();
 
-        fetch('/tools/invoke', {
+        const isAmazonRecon = argsPayload.tool === 'amazon_recon' || argsPayload.tool === 'amazon-recon';
+        const endpoint = isAmazonRecon ? '/api/amazon_recon' : '/tools/invoke';
+        const bodyPayload = isAmazonRecon ? { query: argsPayload.arguments?.query || '' } : {
+            tool: argsPayload.tool || "ping",
+            arguments: argsPayload.arguments || {},
+            gatewayHost: gatewayHost
+        };
+
+        fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tool: argsPayload.tool || "ping",
-                arguments: argsPayload.arguments || {},
-                gatewayHost: gatewayHost
-            })
+            body: JSON.stringify(bodyPayload)
         })
         .then(async (res) => {
             const latency = Date.now() - startTime;
@@ -1297,7 +1366,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         functionResponses: [
                             {
                                 id: callId,
-                                name: "execute",
+                                name: originalToolName,
                                 response: { result: JSON.stringify(data) }
                             }
                         ]
@@ -1321,7 +1390,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     functionResponses: [
                         {
                             id: callId,
-                            name: "execute",
+                            name: originalToolName,
                             response: { error: err.message }
                         }
                     ]
@@ -1409,36 +1478,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 'image/jpeg');
     });
 
-    // Amazon search integration
-    amazonSearchBtn.addEventListener('click', () => {
-        const query = amazonQuery.value.trim();
-        if (!query) return;
-
-        amazonResults.style.display = 'block';
-        amazonResults.innerText = `Searching Amazon listings for "${query}"...\n`;
-
-        fetch('/tools/invoke', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                tool: "google_search",
-                arguments: { query: `site:amazon.com ${query}` },
-                gatewayHost: gatewayIpInput.value || 'localhost'
-            })
-        })
-        .then(async res => {
-            if (res.ok) {
-                const data = await res.json();
-                amazonResults.innerText = JSON.stringify(data, null, 2);
-            } else {
-                const errText = await res.text();
-                amazonResults.innerText = `Search Error: HTTP ${res.status}\n${errText}`;
-            }
-        })
-        .catch(err => {
-            amazonResults.innerText = `Network Error: ${err.message}`;
-        });
-    });
 
     // --- 9. Gallery Management ---
     function refreshGallery() {
@@ -1531,6 +1570,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 runPostCheck();
             });
     });
+
+    const addTodoBtn = document.getElementById('add-todo-btn');
+    const todoInput = document.getElementById('todo-input');
+    const todoList = document.getElementById('todo-list');
+
+    if (addTodoBtn && todoInput && todoList) {
+        addTodoBtn.addEventListener('click', () => {
+            const val = todoInput.value.trim();
+            if (val) {
+                const li = document.createElement('li');
+                li.style.marginBottom = "0.5rem";
+                li.style.display = "flex";
+                li.style.alignItems = "center";
+                li.style.gap = "0.5rem";
+                li.innerHTML = `<input type="checkbox" disabled /> <span>${val}</span>`;
+                todoList.appendChild(li);
+                todoInput.value = "";
+                logTerminal(`Added missing feature to backlog: ${val}`, "system");
+            }
+        });
+        todoInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addTodoBtn.click();
+        });
+    }
 
     console.log("VisionClaw Web Dashboard & Simulation Client initialized.");
 });

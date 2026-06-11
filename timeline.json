@@ -1,22 +1,22 @@
 ﻿{
     "events":  [
                    {
-                       "time":  "3ms",
+                       "time":  "0ms",
                        "status":  "SUCCESS",
                        "event":  "Integration_Test_Start"
                    },
                    {
-                       "time":  "2133ms",
+                       "time":  "2081ms",
                        "status":  "SUCCESS",
                        "event":  "API_Config_Check"
                    },
                    {
-                       "time":  "2199ms",
+                       "time":  "2157ms",
                        "status":  "SUCCESS",
                        "event":  "Tool_Invoke_Ping"
                    },
                    {
-                       "time":  "18869ms",
+                       "time":  "16504ms",
                        "status":  "SUCCESS",
                        "event":  "API_POST_Check"
                    }

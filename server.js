@@ -334,6 +334,74 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // 3e. API: Amazon Recon Proxy
+    if (req.method === 'POST' && req.url === '/api/amazon_recon') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                const query = payload.query || '';
+                if (!query) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: "Query is required" }));
+                }
+
+                const apiKey = envConfig['SERPAPI_API_KEY'];
+                if (!apiKey) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ error: "SERPAPI_API_KEY is not configured" }));
+                }
+
+                const serpUrl = `https://serpapi.com/search?engine=google&q=site:amazon.com+${encodeURIComponent(query)}&api_key=${apiKey}`;
+
+                const serpReq = https.get(serpUrl, { timeout: 10000 }, (serpRes) => {
+                    let data = '';
+                    serpRes.on('data', chunk => { data += chunk; });
+                    serpRes.on('end', () => {
+                        try {
+                            const parsed = JSON.parse(data);
+                            const organic = parsed.organic_results || [];
+                            
+                            const topItems = organic.slice(0, 3).map(item => ({
+                                title: item.title,
+                                price: item.extracted_price ? `$${item.extracted_price}` : (item.price || "N/A"),
+                                link: item.link
+                            }));
+
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({
+                                status: "success",
+                                results: topItems,
+                                message: `Found ${topItems.length} matching items on Amazon via SerpApi.`
+                            }));
+                        } catch (e) {
+                            res.writeHead(500, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: "Failed to parse SerpApi response" }));
+                        }
+                    });
+                });
+
+                serpReq.on('timeout', () => {
+                    serpReq.destroy();
+                    res.writeHead(504, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: "SerpApi request timed out after 10 seconds." }));
+                });
+
+                serpReq.on('error', (err) => {
+                    res.writeHead(502, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: `SerpApi connection error: ${err.message}` }));
+                });
+
+            } catch (e) {
+                console.error("[Amazon Recon Error]", e);
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: e.message || "Failed to execute Amazon Recon" }));
+            }
+        });
+        return;
+    }
+
     // 4. API: Tool Invoke Proxy
     if (req.method === 'POST' && req.url === '/tools/invoke') {
         let body = '';

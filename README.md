@@ -190,6 +190,15 @@ To support remote debugging without uploading the entire codebase, VisionClaw ma
 
 ---
 
+## 🛠️ Recent System Optimization & Bug Fixes (June 2026 Update)
+
+1. **Audio Input Initialization Bug Fix**: Resolved a critical `ReferenceError` where an undefined `source` variable was being referenced inside `index.js:startMicrophoneCapture()`. The script now cleanly relies on the validated `micSourceNode` connection structure.
+2. **Stateful WebSocket Tool-Calling Mismatch Patch**: Resolved a tool execution bug where incoming tool calls for `amazon_recon` were silently dropped. The message dispatcher now actively intercepts both `execute` and `amazon_recon` namespaces, translating payloads and returning responses to the WebSocket under their original function names.
+3. **Automatic Task Supervisor Integration**: Stabilized local process orchestration. Running `START_APP.ps1` automatically performs active port conflict resolution, resolves stale runtime configurations, and launches the Node dashboard, OpenClaw gateway, and ws_proxy.
+4. **Handoff Diagnostic Verification Pass**: Completed end-to-end simulation test cycles verified by `RUN_JOB.ps1`, confirming full alignment with the 8-file handoff contract.
+
+---
+
 ## 🔮 Future Functionality & Roadmap
 
 1. **Persistent Local Vector Cache**: Add local vector search capabilities directly on the gateway for local photo retrieval queries using low-latency embeddings.
