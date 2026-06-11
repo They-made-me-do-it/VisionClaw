@@ -27,6 +27,7 @@ def load_api_key():
     return os.environ.get('GEMINI_API_KEY')
 
 active_session = None
+connection_counter = 0
 
 async def handler(websocket):
     global active_session
@@ -58,12 +59,18 @@ async def handler(websocket):
             except (asyncio.CancelledError, Exception):
                 pass
                 
+    global connection_counter
+    connection_counter += 1
+    session_id = connection_counter
+
     session_info = {
+        'id': session_id,
         'websocket': websocket,
         'google_ws': None,
         'task': current_task
     }
     active_session = session_info
+    print(f"[Proxy][Session {session_id}] New connection established. Active session updated.", flush=True)
 
     # Parse API key from query params or fall back to .env
     try:
@@ -90,25 +97,31 @@ async def handler(websocket):
         # Connect to Google. This backend request will not include the browser Origin header.
         async with websockets.connect(google_url) as google_ws:
             session_info['google_ws'] = google_ws
-            print("[Proxy] Handshake established with Google. Relaying traffic bidirectionally...", flush=True)
+            print(f"[Proxy][Session {session_id}] Handshake established with Google. Relaying traffic bidirectionally...", flush=True)
             
             async def forward_to_google():
+                print(f"[Proxy][Session {session_id}] Task 'forward_to_google' started.", flush=True)
                 try:
                     async for message in websocket:
+                        if active_session is None or active_session['id'] != session_id:
+                            print(f"[Proxy][Session {session_id}] WARNING: Forwarding to Google while NOT active session! Stacking risk!", flush=True)
                         await google_ws.send(message)
                 except websockets.exceptions.ConnectionClosed:
-                    pass
+                    print(f"[Proxy][Session {session_id}] Browser websocket closed. Stopping forward_to_google.", flush=True)
                 except asyncio.CancelledError:
-                    pass
+                    print(f"[Proxy][Session {session_id}] forward_to_google cancelled.", flush=True)
                     
             async def forward_to_browser():
+                print(f"[Proxy][Session {session_id}] Task 'forward_to_browser' started.", flush=True)
                 try:
                     async for message in google_ws:
+                        if active_session is None or active_session['id'] != session_id:
+                            print(f"[Proxy][Session {session_id}] WARNING: Forwarding from Google to Browser while NOT active session! STACKED VOICE DETECTED!", flush=True)
                         await websocket.send(message)
                 except websockets.exceptions.ConnectionClosed:
-                    pass
+                    print(f"[Proxy][Session {session_id}] Google websocket closed. Stopping forward_to_browser.", flush=True)
                 except asyncio.CancelledError:
-                    pass
+                    print(f"[Proxy][Session {session_id}] forward_to_browser cancelled.", flush=True)
                     
             task_google = asyncio.create_task(forward_to_google())
             task_browser = asyncio.create_task(forward_to_browser())
@@ -123,10 +136,10 @@ async def handler(websocket):
                 task_browser.cancel()
                 
     except asyncio.CancelledError:
-        print("[Proxy] Connection handler cancelled due to session takeover.", flush=True)
+        print(f"[Proxy][Session {session_id}] Connection handler cancelled due to session takeover.", flush=True)
         raise
     except Exception as e:
-        print(f"[Proxy Exception] Error connecting to Google or forwarding traffic: {e}", flush=True)
+        print(f"[Proxy Exception][Session {session_id}] Error connecting to Google or forwarding traffic: {e}", flush=True)
         try:
             await websocket.close(1011, f"Proxy Error: {e}")
         except Exception:
@@ -134,7 +147,7 @@ async def handler(websocket):
     finally:
         if active_session == session_info:
             active_session = None
-        print("[Proxy] Connection session terminated.", flush=True)
+        print(f"[Proxy][Session {session_id}] Connection session terminated cleanly.", flush=True)
 
 async def main():
     print("[Proxy] Starting local WebSocket proxy on ws://localhost:18791...", flush=True)

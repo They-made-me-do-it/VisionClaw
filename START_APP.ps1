@@ -20,6 +20,11 @@ taskkill /F /IM node.exe /T 2>$null
 taskkill /F /IM openclaw.exe /T 2>$null
 # Kill any local ws_proxy.py, run_voice_handshake.py or live_voice_test.py python processes
 Get-CimInstance Win32_Process -Filter "Name = 'python.exe' AND (CommandLine LIKE '%ws_proxy.py%' OR CommandLine LIKE '%run_voice_handshake.py%' OR CommandLine LIKE '%live_voice_test.py%')" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+# Kill any other powershell instances running START_APP.ps1 to stop background supervisor loops
+$myParent = (Get-CimInstance Win32_Process -Filter "ProcessId = $PID").ParentProcessId
+Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' AND CommandLine LIKE '%START_APP.ps1%'" | Where-Object { $_.ProcessId -ne $PID -and $_.ProcessId -ne $myParent } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 Start-Sleep -Seconds 2
 
 # Clear old log or create a new one

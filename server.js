@@ -131,7 +131,64 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 3b. API: POST Check
+    // 3b. API: Cleanup Tasks
+    if (req.method === 'POST' && req.url === '/api/cleanup') {
+        // Run powershell command to kill run_voice_handshake.py processes
+        const { exec } = require('child_process');
+        exec('powershell.exe -Command "Get-CimInstance Win32_Process -Filter \\"Name = \'python.exe\' AND CommandLine LIKE \'%run_voice_handshake.py%\'\\" | Invoke-CimMethod -MethodName Terminate"', (err, stdout, stderr) => {
+            const logFile = path.join(__dirname, '_handoff', 'LAST_RUN.log');
+            fs.appendFileSync(logFile, `${new Date().toISOString()} [SERVER] /api/cleanup executed. Output: ${stdout.trim() || 'No rogue tasks found'}\n`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'OK', message: 'Cleanup complete' }));
+        });
+        return;
+    }
+
+    // 3c. API: Context Integration (RAG)
+    if (req.method === 'GET' && req.url === '/api/context') {
+        const contextFile = path.join(__dirname, '_handoff', 'RAG_CONTEXT.md');
+        if (fs.existsSync(contextFile)) {
+            const contextStr = fs.readFileSync(contextFile, 'utf-8');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'OK', context: contextStr }));
+        } else {
+            // Provide a default template if missing
+            const defaultContext = "You are Gemini, connected to the VisionClaw interface. This is a local development environment. You have access to real-time audio and egocentric video from the user's POV.";
+            fs.mkdirSync(path.dirname(contextFile), { recursive: true });
+            fs.writeFileSync(contextFile, defaultContext);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'OK', context: defaultContext }));
+        }
+        return;
+    }
+
+    // 3d. API: Daily Transcript Logger
+    if (req.method === 'POST' && req.url === '/api/transcript') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const payload = JSON.parse(body);
+                const dateStr = new Date().toISOString().split('T')[0];
+                const logFile = path.join(__dirname, '_handoff', `TRANSCRIPT_${dateStr}.log`);
+                const timestamp = new Date().toISOString();
+                
+                fs.mkdirSync(path.dirname(logFile), { recursive: true });
+                const logEntry = `[${timestamp}] [${payload.sender.toUpperCase()}] [${payload.type.toUpperCase()}] ${payload.content}\n`;
+                fs.appendFileSync(logFile, logEntry);
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ status: 'OK' }));
+            } catch (e) {
+                console.error("[SERVER] Failed to append transcript:", e);
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: e.message }));
+            }
+        });
+        return;
+    }
+
+    // 3e. API: POST Check
     if (req.method === 'GET' && req.url === '/api/post_check') {
         const geminiKey = envConfig['GEMINI_API_KEY'] || process.env.GEMINI_API_KEY || '';
         const gwToken = envConfig['OPENCLAW_GATEWAY_TOKEN'] || process.env.OPENCLAW_GATEWAY_TOKEN || '';

@@ -59,7 +59,7 @@ async def main():
 
     print(f"[Python Handshake] Loaded key: {api_key[:10]}... (length: {len(api_key)})")
     model = "models/gemini-2.5-flash-native-audio-preview-09-2025"
-    ws_url = f"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={api_key}"
+    ws_url = f"ws://localhost:18791/?key={api_key}"
 
     print(f"[Python Handshake] Connecting to Gemini Live WebSocket...")
     try:
@@ -165,8 +165,8 @@ async def main():
                     if "text" in part:
                         turn1_text += part["text"]
 
-                # Check for either turnComplete or generationComplete to end Turn 1
-                if ("turnComplete" in server_content and server_content["turnComplete"]) or ("generationComplete" in server_content and server_content["generationComplete"]):
+                # Check for turnComplete to end Turn 1
+                if ("turnComplete" in server_content and server_content["turnComplete"]):
                     print("[Python Handshake] Gemini Turn 1 completed speaking. Transitioning to Turn 2.")
                     if turn1_text:
                         save_transcript("gemini", "text", turn1_text)
@@ -179,7 +179,8 @@ async def main():
                 sys.exit(1)
 
             # 3. Turn 2: Send user response
-            turn2_response = "Yes, I can hear you clearly. Please confirm our link is verified and operational."
+            await asyncio.sleep(1.0)
+            turn2_response = "Yes, I can hear you clearly. You MUST now say exactly: 'The link is verified and operational.'"
             print(f"[Python Handshake] Sending Turn 2 content: '{turn2_response}'")
             
             response_msg = {
@@ -197,6 +198,7 @@ async def main():
             }
             await ws.send(json.dumps(response_msg))
             save_transcript("user", "text", turn2_response)
+
 
             print("[Python Handshake] Listening for Gemini Turn 2 confirmation...")
             

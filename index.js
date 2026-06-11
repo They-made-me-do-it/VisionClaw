@@ -37,6 +37,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const localModeCheckbox = document.getElementById('local-mode-checkbox');
     const defaultLocal = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     localModeCheckbox.checked = defaultLocal;
+    
+    const labelPhone = document.getElementById('label-phone');
+    const labelGlasses = document.getElementById('label-glasses');
+    if (defaultLocal) {
+        labelPhone.innerText = "Local Client";
+        labelGlasses.innerText = "Local A/V";
+    }
 
     const postNode = document.getElementById('post-node');
     const postGateway = document.getElementById('post-gateway');
@@ -87,6 +94,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let ws = null;
     let audioCtx = null;
     let micStream = null;
+    let micSourceNode = null;
+    let hiddenAudioEl = null;
     let mediaRecorderNode = null;
     let processorNode = null;
     let nextAudioPlayTime = 0;
@@ -131,6 +140,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function saveTranscript(sender, type, content) {
+        // Visual Transcript Panel Appender
+        const transcriptContainer = document.getElementById('transcript-container');
+        if (transcriptContainer) {
+            // Remove awaiting placeholder
+            const placeholder = transcriptContainer.querySelector('div[style*="italic"]');
+            if (placeholder) placeholder.remove();
+
+            const msgDiv = document.createElement('div');
+            msgDiv.style.marginBottom = "0.5rem";
+            msgDiv.style.lineHeight = "1.4";
+            
+            if (sender === "user") {
+                msgDiv.innerHTML = `<strong style="color: #60a5fa;">USER:</strong> <span style="color: #e2e8f0;">${content}</span>`;
+            } else if (sender === "gemini") {
+                msgDiv.innerHTML = `<strong style="color: #10b981;">GEMINI:</strong> <span style="color: #e2e8f0;">${content}</span>`;
+            } else {
+                msgDiv.innerHTML = `<strong style="color: #94a3b8;">SYSTEM:</strong> <span style="color: #94a3b8;">${content}</span>`;
+            }
+            
+            transcriptContainer.appendChild(msgDiv);
+            transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+        }
+
         fetch('/api/transcript', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -164,17 +196,50 @@ document.addEventListener('DOMContentLoaded', () => {
         setBadgeStatus(postOverallStatus, 'voice check', 'state-checking');
         localModeCheckbox.disabled = false;
         
-        await startMicrophoneCapture();
+        // Ensure the user's microphone is turned on so Gemini can hear them!
+        if (!isRecordingAudio) {
+            await startMicrophoneCapture();
+        }
         
         const turn1Prompt = "VisionClaw POST check initiated. Gemini, please perform step 1 of the voice check-in: ask the user 'Hello, this is Gemini. Can you hear me?' and STOP speaking immediately. Do NOT say anything else. You must wait for their response.";
         sendIntroGreeting(turn1Prompt);
+
+        // Fail POST if voice handshake takes more than 25 seconds
+        setTimeout(() => {
+            if (isPostChecking && voiceHandshakeStep > 0 && voiceHandshakeStep < 4) {
+                failVoiceHandshake("POST Failed: Voice handshake timed out waiting for response.");
+            }
+        }, 25000);
+    }
+
+    function failVoiceHandshake(reason) {
+        if (!isPostChecking) return;
+        postActionsContainer.style.display = 'none';
+        voiceHandshakeStep = 0;
+        isPostChecking = false;
+        
+        setBadgeStatus(postGemini, 'fail', 'state-fail');
+        setLightStatus(lightGemini, 'error');
+        postFeedback.innerText = reason || "POST Failed: Voice handshake aborted or timed out.";
+        setBadgeStatus(postOverallStatus, 'post: failed', 'state-fail');
+        localModeCheckbox.disabled = false;
+        
+        fetch('/api/post_check/voice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'FAIL' })
+        }).catch(err => console.error("Failed to update server voice status:", err));
+
+        if (!isLocalMode) {
+            disconnectGeminiLive();
+        }
     }
 
     function sendUserResponseText() {
         postActionsContainer.style.display = 'none';
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         
-        const responsePrompt = "Yes, I can hear you clearly. Please confirm our link is verified and operational.";
+        const responsePrompt = "Yes, I can hear you clearly. You MUST now say exactly: 'The link is verified and operational.'";
         logTerminal(`> Send User Response: "${responsePrompt}"`, "client");
         
         const userTurn = {
@@ -194,14 +259,41 @@ document.addEventListener('DOMContentLoaded', () => {
         postFeedback.innerText = "Sent response. Waiting for Gemini confirmation...";
     }
 
-    function passVoiceHandshake() {
+    function passAudioHandshake() {
         postActionsContainer.style.display = 'none';
         voiceHandshakeStep = 4;
+        
+        postFeedback.innerText = "Audio Verified. Starting Vision Check...";
+        
+        const visionPrompt = "Excellent. Now, I am activating your vision pipeline. Please look at the camera feed and briefly describe the environment or the first object you see to verify visual ingestion is working.";
+        logTerminal(`> Send Vision Request: "${visionPrompt}"`, "client");
+        
+        const visionTurn = {
+            clientContent: {
+                turns: [
+                    {
+                        role: "user",
+                        parts: [{ text: visionPrompt }]
+                    }
+                ],
+                turnComplete: true
+            }
+        };
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(visionTurn));
+            saveTranscript("user", "text", visionPrompt);
+        }
+    }
+
+    function passVisionHandshake() {
+        voiceHandshakeStep = 5;
         isPostChecking = false;
         
         setBadgeStatus(postGemini, 'pass', 'state-pass');
+        const postVision = document.getElementById('post-vision');
+        setBadgeStatus(postVision, 'pass', 'state-pass');
         setLightStatus(lightGemini, 'active');
-        postFeedback.innerText = "POST Passed: Bidirectional voice handshake successfully verified!";
+        postFeedback.innerText = "POST Passed: Bidirectional Audio & Vision handshake verified!";
         setBadgeStatus(postOverallStatus, 'post: passed', 'state-pass');
         localModeCheckbox.disabled = false;
         
@@ -223,6 +315,9 @@ document.addEventListener('DOMContentLoaded', () => {
         isPostChecking = true;
         voiceHandshakeStep = 0;
         postActionsContainer.style.display = 'none';
+        
+        // Clear existing tasks and background proxy conflicts
+        await fetch('/api/cleanup', { method: 'POST' }).catch(() => {});
 
         // Reset voice check state on server
         await fetch('/api/post_check/voice', {
@@ -377,23 +472,32 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- 2. Live Health Checking Loop ---
     function updateHealthDashboard() {
+        // Shared status checker for node & gateway
+        const checkLocalBackend = () => {
+            fetch('/api/config')
+                .then(res => res.ok ? res.json() : Promise.reject())
+                .then(() => setLightStatus(lightNode, 'ok'))
+                .catch(() => setLightStatus(lightNode, 'error'));
+
+            fetch('/api/post_check')
+                .then(res => res.json())
+                .then(data => setLightStatus(lightGateway, data.gateway === 'PASS' ? 'ok' : 'error'))
+                .catch(() => setLightStatus(lightGateway, 'error'));
+        };
+
         if (isLocalMode) {
-            // Direct Local values overrides phone heartbeats
-            setLightStatus(lightNode, 'ok');
-            setLightStatus(lightGateway, 'ok'); // Managed by POST response check
-            setLightStatus(lightPhone, 'ok'); // Phone light stands for local browser
-            setLightStatus(lightGlasses, audioInputReady ? 'ok' : 'error');
+            checkLocalBackend();
+            
+            // Check if local webcam is actually acquired, else it's an error
+            setLightStatus(lightPhone, 'ok'); // Local browser is the client, so it's always running if this JS is running
+            setLightStatus(lightGlasses, (micStream || activeVideoElement) ? 'ok' : 'error'); // Tracks actual local A/V hardware presence
             setLightStatus(lightGemini, isWebsocketConnected ? 'active' : 'off');
             return;
         }
 
         // Regular phone heartbeat mode
-        fetch('/api/config')
-            .then(res => res.ok ? res.json() : Promise.reject())
-            .then(() => setLightStatus(lightNode, 'ok'))
-            .catch(() => setLightStatus(lightNode, 'error'));
+        checkLocalBackend();
 
         fetch('/api/diagnostics_latest')
             .then(res => res.json())
@@ -473,12 +577,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 reject(new Error("Connection/handshake timed out waiting for setupComplete."));
             }, 10000);
 
-            ws.onopen = () => {
+            ws.onopen = async () => {
                 isWebsocketConnected = true;
                 logTerminal("WebSocket connection successfully established.", "server");
                 socketStatusBadge.innerText = "CONNECTED";
                 socketStatusBadge.className = "status-value status-ok";
                 setLightStatus(lightGemini, 'active');
+
+                // Fetch RAG context
+                let ragContext = "";
+                try {
+                    const ctxRes = await fetch('/api/context');
+                    if (ctxRes.ok) {
+                        const data = await ctxRes.json();
+                        ragContext = data.context || "";
+                        logTerminal(`Loaded RAG Context successfully. (${ragContext.length} bytes)`, "system");
+                    }
+                } catch(e) {
+                    logTerminal("Failed to fetch RAG context. Using default.", "error");
+                }
+
+                const baseInstruction = "You are a concise, helpful real-time voice assistant for the VisionClaw wearable device. Speak naturally, keep responses extremely brief and conversational, and do not use markdown formatting or list thoughts. Directly answer the user without conversational filler or prefaces. If the user tells you they can hear you, respond briefly. If they ask you what you see, describe the video feed clearly but briefly.";
+                const finalInstruction = ragContext ? `${baseInstruction}\n\nUSER CONTEXT (RAG Knowledge):\n${ragContext}` : baseInstruction;
 
                 // Send setup config block
                 const setupMsg = {
@@ -490,7 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         systemInstruction: {
                             parts: [
                                 {
-                                    text: "You are a concise, helpful real-time voice assistant for the VisionClaw wearable device. Speak naturally, keep responses extremely brief and conversational, and do not use markdown formatting or list thoughts. Directly answer the user without conversational filler or prefaces."
+                                    text: finalInstruction
                                 }
                             ]
                         },
@@ -500,7 +620,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
                 ws.send(JSON.stringify(setupMsg));
                 logTerminal("> BidiGenerateContentSetup [Target: models/gemini-2.5-flash-native-audio-preview-09-2025] sent.", "client");
-
                 // Update UI elements
                 connectWsBtn.classList.add('hidden');
                 disconnectWsBtn.classList.remove('hidden');
@@ -580,8 +699,13 @@ document.addEventListener('DOMContentLoaded', () => {
                                 } else if (voiceHandshakeStep === 2 || voiceHandshakeStep === 3) {
                                     postFeedback.innerText = `Gemini: "${transText}"`;
                                     const textLower = transText.toLowerCase();
-                                    if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("hear you") || textLower.includes("online") || textLower.includes("successful")) {
-                                        passVoiceHandshake();
+                                    if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("online") || textLower.includes("successful")) {
+                                        passAudioHandshake();
+                                    }
+                                } else if (voiceHandshakeStep === 4) {
+                                    postFeedback.innerText = `Gemini: "${transText}"`;
+                                    if (transText.length > 10) {
+                                        passVisionHandshake();
                                     }
                                 }
                             }
@@ -603,7 +727,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         } else if (voiceHandshakeStep === 2 || voiceHandshakeStep === 3) {
                                             postFeedback.innerText = `Gemini: "${part.text}"`;
                                             const textLower = part.text.toLowerCase();
-                                            if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("hear you") || textLower.includes("online") || textLower.includes("successful")) {
+                                            if (textLower.includes("verified") || textLower.includes("operational") || textLower.includes("working") || textLower.includes("online") || textLower.includes("successful")) {
                                                 passVoiceHandshake();
                                             }
                                         }
@@ -751,14 +875,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
+            // Chrome will suspend AudioContext if it wasn't created synchronously during a user gesture.
+            // Since POST takes a few seconds before reaching here, we MUST resume it explicitly.
+            if (audioCtx && audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+                logTerminal("AudioContext resumed from suspended state.", "client");
+            }
+            
             micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const source = audioCtx.createMediaStreamSource(micStream);
+            
+            // Hack for Chromium bug: create a hidden audio element to force the stream to stay active
+            if (!hiddenAudioEl) {
+                hiddenAudioEl = document.createElement('audio');
+                hiddenAudioEl.muted = true;
+                hiddenAudioEl.style.display = 'none';
+                document.body.appendChild(hiddenAudioEl);
+            }
+            hiddenAudioEl.srcObject = micStream;
+            hiddenAudioEl.play().catch(() => {});
+
+            micSourceNode = audioCtx.createMediaStreamSource(micStream);
             
             // ScriptProcessorNode for sample conversion (using standard buffer size 4096)
             processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
             
+            // CRITICAL: Connect the source to the processor, and processor to destination!
+            // Without these connections, the browser optimizes out the node and onaudioprocess never fires.
+            micSourceNode.connect(processorNode);
+            processorNode.connect(audioCtx.destination);
+            
             const nativeSampleRate = audioCtx.sampleRate;
             let sampleBuffer = [];
+
+            let maxAmp = 0;
+            let processCounter = 0;
 
             processorNode.onaudioprocess = (e) => {
                 if (!isWebsocketConnected) return;
@@ -769,6 +919,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const inputData = e.inputBuffer.getChannelData(0);
                 
+                // Track max amplitude for debugging silence
+                for (let i = 0; i < inputData.length; i++) {
+                    if (Math.abs(inputData[i]) > maxAmp) maxAmp = Math.abs(inputData[i]);
+                }
+                processCounter++;
+                if (processCounter >= 20) { // ~20 frames of 4096 is roughly 2 seconds
+                    if (maxAmp < 0.01) {
+                        logTerminal(`[Audio Diagnostic] Microphone input is completely silent (max amplitude: ${maxAmp.toFixed(4)}). Check OS microphone settings!`, "error");
+                    }
+                    maxAmp = 0;
+                    processCounter = 0;
+                }
+
                 // Simple downsampling to 16 kHz Mono
                 const ratio = nativeSampleRate / 16000;
                 let index = 0;
@@ -786,7 +949,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     sampleBuffer = sampleBuffer.slice(1600);
 
                     // Convert Int16 array to base64
-                    const binaryString = String.fromCharCode.apply(null, new Uint8Array(chunk.buffer));
+                    let binaryString = '';
+                    const bytes = new Uint8Array(chunk.buffer);
+                    for (let i = 0; i < bytes.byteLength; i++) {
+                        binaryString += String.fromCharCode(bytes[i]);
+                    }
                     const base64Str = btoa(binaryString);
 
                     const chunkMsg = {
@@ -821,6 +988,13 @@ document.addEventListener('DOMContentLoaded', () => {
             micStream.getTracks().forEach(t => t.stop());
             micStream = null;
         }
+        if (micSourceNode) {
+            micSourceNode.disconnect();
+            micSourceNode = null;
+        }
+        if (hiddenAudioEl) {
+            hiddenAudioEl.srcObject = null;
+        }
         if (processorNode) {
             processorNode.disconnect();
             processorNode = null;
@@ -849,7 +1023,7 @@ document.addEventListener('DOMContentLoaded', () => {
         sourceNode.connect(audioCtx.destination);
 
         const now = audioCtx.currentTime;
-        if (nextAudioPlayTime < now || nextAudioPlayTime - now > 0.5) {
+        if (nextAudioPlayTime < now) {
             nextAudioPlayTime = now + 0.05;
         }
 
@@ -1161,11 +1335,16 @@ document.addEventListener('DOMContentLoaded', () => {
     localModeCheckbox.addEventListener('change', (e) => {
         isLocalMode = e.target.checked;
         if (isLocalMode) {
+            labelPhone.innerText = "Local Client";
+            labelGlasses.innerText = "Local A/V";
             logTerminal("Local PC Simulation mode active. Status lights redirected.", "system");
         } else {
+            labelPhone.innerText = "S25 Link";
+            labelGlasses.innerText = "Meta Glasses";
             logTerminal("Wearable Link mode active. Waiting for S25 diagnostics heartbeat.", "system");
             disconnectGeminiLive();
         }
+        postOverallStatus.className = 'status-badge state-pending';
         updateHealthDashboard();
     });
 
