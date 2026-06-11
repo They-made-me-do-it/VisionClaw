@@ -87,6 +87,14 @@ graph TD
     *   Redirects packages validation lookups (`OPENCLAW_CLAWHUB_URL`) to a local dashboard server registry mock to execute rapid offline skill verifications.
 16. **Enforced Docker Sandbox Isolation**:
     *   Applies a robust execution profile (`mode: "non-main"`, `backend: "docker"`) under `openclaw.json` security settings to run all untrusted containerized processes safely.
+17. **Network-Aware Adaptive Ingestion**:
+    *   Dynamically down-regulates camera capture frequency based on a rolling average of tool execution round-trip times (RTT). Lowers frequency to 0.1 FPS under high latency (>250 ms) and switches to manual snapshot gating during severe drops.
+18. **SQLite Visual Vector Cache Layer**:
+    *   Utilizes a local edge embedding projection (8x8 grayscale) and a local SQLite cache database to prevent duplicate WebSocket uploads. Blocks frame uploads if visual similarity matches above a 95% threshold within a 5-minute rolling window.
+19. **Background Concurrency Thread Isolation**:
+    *   Offloads heavy edge-based `android.media.FaceDetector` canvas processing onto a dedicated background thread worker pool (`Dispatchers.Default`). Pipes masked JPEGs to a non-blocking channel consumed by `Dispatchers.IO` for network operations, ensuring audio streams never experience packet dropouts.
+20. **Gateway Threat Gating & Client Circuit Breaker**:
+    *   Parses input parameters inside the proxy gateway layer (`server.js`) to strip shell operators (`;`, `&&`, `|`), traversal attempts (`../`), and admin keywords. Automatically logs alerts to `_handoff/ERRORS.log`, trips circuit breakers, and drops WebSocket connections upon detecting threat patterns.
 
 ---
 
