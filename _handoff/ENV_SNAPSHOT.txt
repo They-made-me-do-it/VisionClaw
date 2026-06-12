@@ -1,13 +1,17 @@
 ﻿=== ENVIRONMENT SNAPSHOT ===
-Timestamp: 2026-06-11T17:50:10.8469404-05:00
+Timestamp: 2026-06-11T21:51:48.7663349-05:00
 OS: Microsoft Windows 11 Home (Microsoft Windows NT 10.0.26200.0)
 PowerShell Version: 5.1.26100.8655
 Python: Python 3.13.13
 Node.js: v24.15.0
 npm: 11.12.1
 ANDROID_HOME: C:\Users\jgeis\AppData\Local\Android\Sdk
-adb: Found
+JAVA_HOME: C:\Program Files\Android\Android Studio\jbr
+adb: Found (R5CY31HVV3Y connected)
 OpenClaw CLI: OpenClaw 2026.6.1 (2e08f0f)
-OpenClaw Gateway: Stopped or Unhealthy
+OpenClaw Gateway: Running (localhost:18789)
 Gemini API Key: Found (AQ.Ab8RN6I...)
 Gemini API Key Validation: Success (Key is active)
+=== BUILD FIX APPLIED ===
+- Applied JAVA_HOME fix for java.security InternalError.
+- Clean build performed successfully.

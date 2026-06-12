@@ -8,6 +8,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -19,6 +20,8 @@ import org.json.JSONObject
 import java.io.IOException
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
+    private val TAG = "VisionClaw"
+    
     private lateinit var apiKeyInput: EditText
     private lateinit var gatewayIpInput: EditText
     private lateinit var gatewayTokenInput: EditText
@@ -38,31 +41,35 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var isGeminiActive = false
     private var isWebRTCActive = false
     private var audioManager: AudioManager? = null
-    
+
     private var tts: TextToSpeech? = null
-    
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
+            Log.i(TAG, "TTS Initialized")
             tts?.language = Locale.US
+            speak("System Initializing.")
         }
     }
 
     private fun speak(text: String) {
-        System.out.println("[MainActivity] TTS: $text")
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "handshake")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
     }
 
-    private fun getResId(name: String, defType: String): Int {
-        return resources.getIdentifier(name, defType, packageName)
+    private fun getResId(resName: String, resType: String): Int {
+        return resources.getIdentifier(resName, resType, packageName)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i(TAG, "onCreate entry")
         
         val layoutId = getResId("activity_main", "layout")
         if (layoutId != 0) {
             setContentView(layoutId)
+            Log.i(TAG, "Layout set: " + layoutId)
         } else {
+            Log.e(TAG, "CRITICAL: activity_main layout not found!")
             return
         }
 
@@ -88,7 +95,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         backendToggleBtn.setOnClickListener {
             activeBackend = if (activeBackend == "GEMINI_LIVE") "MMDUET2_LOCAL" else "GEMINI_LIVE"
-            backendToggleBtn.text = "ACTIVE BACKEND: $activeBackend"
+            backendToggleBtn.text = "ACTIVE BACKEND: " + activeBackend
             mmduet2Card.visibility = if (activeBackend == "MMDUET2_LOCAL") android.view.View.VISIBLE else android.view.View.GONE
         }
 
@@ -97,24 +104,36 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         
         mmduet2ResetBtn.setOnClickListener { resetMMDuet2Server() }
 
-        val client = okhttp3.OkHttpClient()
-        val request = okhttp3.Request.Builder().url("http://127.0.0.1:18790/api/config").build()
-        client.newCall(request).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {}
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                val b = response.body
-                if (b != null) {
-                    try {
-                        val json = JSONObject(b.string())
+        Log.i(TAG, "Starting config fetch thread")
+        val t = object : Thread() {
+            override fun run() {
+                try {
+                    Log.i(TAG, "Thread started, waiting 2s...")
+                    Thread.sleep(2000)
+                    val client = okhttp3.OkHttpClient()
+                    val request = okhttp3.Request.Builder().url("http://localhost:18790/api/config").build()
+                    Log.i(TAG, "Executing blocking GET...")
+                    val response = client.newCall(request).execute()
+                    val code = response.code
+                    Log.i(TAG, "Blocking GET Result: " + code)
+                    val b = response.body
+                    val bodyStr = b?.string()
+                    response.close()
+                    
+                    if (code == 200 && bodyStr != null) {
+                        val json = JSONObject(bodyStr)
                         runOnUiThread {
                             if (json.has("geminiApiKey")) apiKeyInput.setText(json.getString("geminiApiKey"))
                             if (json.has("gatewayToken")) gatewayTokenInput.setText(json.getString("gatewayToken"))
                         }
-                    } catch (e: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Blocking GET ERROR: " + (e.message ?: "unknown"))
                 }
             }
-        })
-
+        }
+        t.start()
+        
         startDiagnosticLoop()
     }
 
@@ -153,22 +172,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         report.put("isWebRTCActive", isWebRTCActive)
         report.put("audioHardware", audioManager?.getHardwareReport() ?: JSONObject().put("status", "not_init"))
         report.put("wearableStatus", getWearableConnectionStatus())
-        report.put("connectionType", "USB_TUNNEL_V19_TTS")
+        report.put("connectionType", "USB_TUNNEL_V27_STABLE")
 
         val client = okhttp3.OkHttpClient()
-        // No media type to avoid deprecation errors
         val body = okhttp3.RequestBody.create(null, report.toString())
-        val request = okhttp3.Request.Builder().url("http://127.0.0.1:18790/api/diagnostics").post(body).build()
+        val request = okhttp3.Request.Builder().url("http://localhost:18790/api/diagnostics").post(body).build()
 
         client.newCall(request).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {}
+            override fun onFailure(call: okhttp3.Call, e: IOException) {
+                Log.e(TAG, "Diag report failed: " + (e.message ?: "unknown"))
+            }
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                 response.use { resp ->
                     if (resp.isSuccessful) {
-                        val b = resp.body?.string()
-                        if (b != null) {
+                        val b = resp.body
+                        val bStr = b?.string()
+                        if (bStr != null) {
                             try {
-                                val json = JSONObject(b)
+                                val json = JSONObject(bStr)
                                 if (json.has("averageRtt")) {
                                     val avgRtt = json.getDouble("averageRtt")
                                     VideoPipeline.shared.updateRttMetric(avgRtt)
@@ -245,7 +266,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val gatewayIp = gatewayIpInput.text.toString().trim()
         val client = okhttp3.OkHttpClient()
         val body = okhttp3.RequestBody.create(null, "")
-        val request = okhttp3.Request.Builder().url("http://$gatewayIp:18789/api/reset").post(body).build()
+        val request = okhttp3.Request.Builder().url("http://" + gatewayIp + ":18789/api/reset").post(body).build()
         client.newCall(request).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: IOException) {}
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {}

@@ -12,3 +12,9 @@
 2026-06-11T19:15:13.4094252-05:00 [INFO] Dashboard Server active at: http://localhost:18790
 2026-06-11T19:15:13.4117683-05:00 [INFO] Skipping default web browser launch (-NoBrowser active).
 2026-06-11T19:15:37.5313000-05:00 [INFO] Pipeline integration test job execution completed successfully.
+2026-06-11T19:28:23.9047315-05:00 [WARN] OpenClaw Gateway is unresponsive or stopped. Attempting recovery...
+2026-06-11T19:28:28.0570645-05:00 [INFO] OpenClaw Gateway restarted successfully.
+2026-06-11T21:52:51.2234065-05:00 [WARN] Node.js Server health check request failed: The operation has timed out.
+2026-06-11T21:52:52.4001515-05:00 [WARN] Node.js Server is unresponsive or stopped. Attempting recovery...
+2026-06-11T21:52:55.4609669-05:00 [INFO] Node.js Server restarted.
+2026-06-11T21:58:37.5141738-05:00 [INFO] Pipeline integration test job execution completed successfully.

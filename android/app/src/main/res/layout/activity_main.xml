@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="VISIONCLAW GATEWAY"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="24dp"/>
+
+        <EditText
+            android:id="@+id/api_key_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Gemini API Key"
+            android:inputType="textPassword"/>
+
+        <EditText
+            android:id="@+id/gateway_ip_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Gateway IP (e.g. 192.168.1.5)"
+            android:text="10.0.2.2"/>
+
+        <EditText
+            android:id="@+id/gateway_token_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Gateway Bearer Token"
+            android:inputType="textPassword"/>
+
+        <EditText
+            android:id="@+id/webrtc_url_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Signaling URL"
+            android:text="ws://localhost:8889"/>
+
+        <Button
+            android:id="@+id/btn_toggle_backend"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ACTIVE BACKEND: GEMINI_LIVE"
+            android:layout_marginTop="16dp"/>
+
+        <LinearLayout
+            android:id="@+id/card_mmduet2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#f0f0f0"
+            android:padding="8dp"
+            android:layout_marginTop="8dp">
+
+            <EditText
+                android:id="@+id/et_mmduet2_prompt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="System Prompt Override"/>
+
+            <Button
+                android:id="@+id/btn_reset_mmduet2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="RESET MMDUET2 SERVER"/>
+
+            <TextView
+                android:id="@+id/tv_overlay_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Overlay: Inactive"/>
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#cccccc"
+            android:layout_marginVertical="16dp"/>
+
+        <Button
+            android:id="@+id/btn_toggle_gemini"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TOGGLE GEMINI LIVE"/>
+
+        <Button
+            android:id="@+id/btn_toggle_webrtc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TOGGLE WEBRTC STREAM"/>
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status: Idle"
+            android:textSize="18sp"
+            android:layout_marginTop="16dp"
+            android:gravity="center"/>
+
+    </LinearLayout>
+</ScrollView>
