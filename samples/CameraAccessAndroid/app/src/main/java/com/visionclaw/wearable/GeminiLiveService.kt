@@ -321,10 +321,14 @@ public class GeminiLiveService private constructor() {
         webSocket?.send(clientMessage.toString())
     }
 
-    /**
-     * Transmit real-time audio/video input payloads upstream
-     */
     public fun sendMediaChunk(mimeType: String, base64Data: String) {
+        webSocket?.let { ws ->
+            if (ws.queueSize() > 0L) {
+                System.out.println("[GeminiLiveService] Outbound queue has ${ws.queueSize()} bytes. Dropping media chunk to preserve battery.")
+                return
+            }
+        }
+
         val mediaChunk = JSONObject()
         mediaChunk.put("mimeType", mimeType)
         mediaChunk.put("data", base64Data)

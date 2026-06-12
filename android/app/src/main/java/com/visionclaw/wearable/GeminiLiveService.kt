@@ -254,6 +254,13 @@ public class GeminiLiveService private constructor() {
     public fun sendMediaChunk(mimeType: String, base64Data: String) {
         if (!isSetupComplete) return
 
+        webSocket?.let { ws ->
+            if (ws.queueSize() > 0L) {
+                System.out.println("[GeminiLiveService] Outbound queue has ${ws.queueSize()} bytes. Dropping media chunk to preserve battery.")
+                return
+            }
+        }
+
         val now = System.currentTimeMillis()
         if (now - lastChunkLogTime > 5000) {
             System.out.println("[GeminiLiveService] Streaming: $mimeType (${base64Data.length} bytes)")
